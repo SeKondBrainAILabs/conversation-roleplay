@@ -29,7 +29,7 @@ export function validateManifest(
       manifest.revision === revision &&
       String(manifest.runId) === String(runId) &&
       manifest.platform === platform,
-    'Artifact provenance does not match the successful main build',
+    'Artifact provenance does not match the successful source build',
   );
   assert(
     /^sha256:[a-f0-9]{64}$/.test(manifest.imageId) &&
@@ -48,6 +48,8 @@ export async function deploy(
       execFileSync(command, args, {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 180000,
+        maxBuffer: 8 * 1024 * 1024,
         ...options,
       }).trim(),
     fetchImpl = fetch,
@@ -58,11 +60,17 @@ export async function deploy(
     repository = 'SeKondBrainAILabs/conversation-roleplay',
     platform = 'linux/arm64',
     workflow = 'test.yml',
+    sourceBranch = 'main',
+    releaseTag,
   } = config;
   assert(
     /^[\w-]+\/[\w.-]+$/.test(repository) &&
       ['linux/arm64', 'linux/amd64'].includes(platform) &&
-      workflow === 'test.yml',
+      workflow === 'test.yml' &&
+      ['main', 'SDDMiniFeet'].includes(sourceBranch) &&
+      (!releaseTag || /^SDDMini-KF\/v\d+\.\d+\.\d+$/.test(releaseTag)) &&
+      (!config.requireReleaseTag ||
+        (sourceBranch === 'SDDMiniFeet' && releaseTag)),
     'Invalid trusted deployment source',
   );
   const directory = resolve(config.directory);
@@ -128,16 +136,36 @@ export async function deploy(
     );
     return response.json();
   };
+  const releaseRevision = () => {
+    const ref = api(`git/ref/tags/${releaseTag}`);
+    assert(ref.object?.type === 'tag', 'Release must be an annotated tag');
+    const tag = api(`git/tags/${ref.object.sha}`);
+    assert(
+      tag.object?.type === 'commit',
+      'Release tag must point directly to a commit',
+    );
+    return tag.object.sha;
+  };
   try {
-    const revision = api('git/ref/heads/main').object.sha;
-    assert(/^[a-f0-9]{40}$/.test(revision), 'Invalid main revision');
+    const revision = api(`git/ref/heads/${sourceBranch}`).object.sha;
+    assert(/^[a-f0-9]{40}$/.test(revision), 'Invalid source revision');
+    if (releaseTag)
+      assert(
+        releaseRevision() === revision,
+        'Release is not the current source branch commit',
+      );
+    if (config.expectedRevision)
+      assert(
+        config.expectedRevision === revision,
+        'Source differs from the authorized release',
+      );
     const runs = api(
-      `actions/workflows/${workflow}/runs?branch=main&event=push&head_sha=${revision}&per_page=20`,
+      `actions/workflows/${workflow}/runs?branch=${sourceBranch}&event=push&head_sha=${revision}&per_page=20`,
     ).workflow_runs;
     const run = runs.find(
       (item) =>
         item.head_sha === revision &&
-        item.head_branch === 'main' &&
+        item.head_branch === sourceBranch &&
         item.event === 'push' &&
         item.status === 'completed' &&
         item.conclusion === 'success' &&
@@ -148,7 +176,7 @@ export async function deploy(
       return {
         status: 'waiting',
         revision,
-        reason: 'Exact main has no successful first-attempt build',
+        reason: 'Exact source has no successful first-attempt build',
       };
     const receiptPath = join(directory, 'deployment.json');
     let priorReceipt;
@@ -176,11 +204,16 @@ export async function deploy(
       ).json();
       if (
         priorReceipt?.revision === revision &&
+        (!releaseTag || priorReceipt.releaseTag === releaseTag) &&
         previous.Image === priorReceipt.imageId &&
         health.revision === revision &&
         previous.State.Health?.Status === 'healthy'
       )
-        return { status: 'unchanged', revision };
+        return {
+          status: 'unchanged',
+          revision,
+          ...(releaseTag && { releaseTag }),
+        };
       const stateResponse = await fetchImpl(`${base}/api/deployment-state`, {
         signal: AbortSignal.timeout(10000),
       });
@@ -206,7 +239,7 @@ export async function deploy(
     );
     assert(
       artifacts.length === 1,
-      'Expected one unexpired image artifact for this exact main build',
+      'Expected one unexpired image artifact for this exact source build',
     );
     temp = mkdtempSync(join(tmpdir(), 'roleplay-deploy-'));
     execute('gh', [
@@ -257,8 +290,9 @@ export async function deploy(
       'Imported image configuration differs from the tested build',
     );
     assert(
-      api('git/ref/heads/main').object.sha === revision,
-      'Main advanced during staging; wait for the new tested build',
+      api(`git/ref/heads/${sourceBranch}`).object.sha === revision &&
+        (!releaseTag || releaseRevision() === revision),
+      'Source or release advanced during staging; wait for the new tested build',
     );
     if (previous) {
       await control('drain');
@@ -309,6 +343,8 @@ export async function deploy(
         repository,
         revision,
         runId: run.id,
+        sourceBranch,
+        ...(releaseTag && { releaseTag, releaseRunId: config.releaseRunId }),
         artifactId: artifacts[0].id,
         platform,
         imageId: loaded.Id,
