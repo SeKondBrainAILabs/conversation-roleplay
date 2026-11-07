@@ -7,7 +7,7 @@ A reusable, MIT-licensed conversation testing module for PiggyBank, Basanti and 
 
 The local dashboard shows an actor conversation board, scenario dependencies, per-turn evaluation, independent API evidence and HAI proposal status. You can pause, stop, inspect archived runs and export sanitized JSON.
 
-The service deployment uses **Core Backend for canonical workspace identity**, **Core AI Backend for all actor/planner/judge inference**, and **Kora HAI as a remote proposal service**. A standalone Docker container can run on a different machine from the products, exercising the network path a real client uses. The local demo remains available without any of those services.
+The service deployment uses **Core Backend for canonical workspace identity**, **Core AI Backend for all actor/planner/judge inference**, **Kora One for the shared capability map and incident queue**, and **Kora HAI for repair candidates**. A standalone Docker container can run on a different machine from the products, exercising the network path a real client uses. The local demo remains available without any of those services.
 
 ![Conversation board showing four fictional actors and a simulated lesson lifecycle](docs/images/conversation-board.png)
 
@@ -62,7 +62,11 @@ flowchart LR
   Lab -->|App-bound inference| AI[Core AI Backend: enhance, plan, actor, judge]
   Lab -->|Authenticated QA actors| Product[PiggyBank, Basanti or HTTP target]
   Lab -->|Independent GET readback| Product
-  Lab -->|Reviewed product proposal contract| HAI[Kora HAI]
+  Lab -->|Sanitized failure, once| One[Kora One: role → case → skill → API]
+  One -->|Durable incident queue| HAI[Kora HAI: repair candidate]
+  HAI --> Sandbox[Product-controlled sandbox and regression checks]
+  Sandbox -->|Verified version only| One
+  Lab -.->|Optional negotiated proposal pilot| HAI
   Lab --> Evidence[(Private persistent run evidence)]
 ```
 
@@ -232,6 +236,37 @@ The built-in proposal envelope defaults to the inspected `piggybank.api_capabili
 
 Reusable learned skills should be published through HAI's reviewed cognition/registry pipeline with their provenance, compatible API contract and permission boundaries. Family-specific names, records and secrets belong in that family's product context, rather than a globally shared skill. Making a reusable capability available to other families must not grant cross-family data access. This lab records proposal and independent effect evidence that such a promotion pipeline can consume; it does not pretend that graph publication or safe global registry promotion already exists.
 
+### HAI-led repairs through Kora One
+
+Use Kora One's shared capability map rather than creating another registry in the test runner. A configured `incidentContractId` connects an evaluated product failure to that service. The runner reports the failure; HAI should find a reusable skill or create a candidate within the permitted API contract. Product-controlled tests and independent API readback must establish the fix before registry promotion. This client implements incident recording and GET-only reconciliation. The HAI worker, candidate installation, graph publication and automatic post-install retesting remain separate integration requirements; recording an incident does not implement those stages.
+
+Enable `services.koraOne` only after reviewing the deployed API and granting a **dedicated canonical OIDC service client** access. Kora One requires an allowed client ID and `kora.internal` on `kora-api`. Do not borrow PiggyBank or Basanti credentials, mint a local JWT, or substitute a static key. The organization header comes from independently authenticated Core Backend identity, never an actor or model. The example configuration leaves this connection disabled. When enabled, its catalog check must pass service readiness even if it is omitted from `services.required`.
+
+The reviewed provider draft currently restricts incident submission to the owning product's service identity and incident listing to HAI. A dedicated roleplay client needs an explicitly scoped reporting/readback grant, or a product-owned forwarding contract, before this direct integration can be enabled. Adding its client ID to a general allowlist alone is insufficient. Contract/unit tests do not establish that these service permissions or the provider deployment are available.
+
+Configure an operator-owned contract under `targets.piggybank.incidentContracts`, for example:
+
+```json
+{
+  "taskDetails": {
+    "product": "piggybank",
+    "platformRole": "child",
+    "roleIds": ["family.child"],
+    "incidentType": "eval_failed",
+    "reasonCode": "task_details_omitted",
+    "caseId": "piggybank.tasks.read_details"
+  }
+}
+```
+
+The case ID is an illustrative reference for a reviewed or missing case, not a claim that this case is already published. Bind the step's actor to a real isolated QA child identity and set `"incidentContractId": "taskDetails"` on the step. The planner can choose only configured IDs. A step cannot also use `repairContractId`; the same failure must not create two repair jobs.
+
+Only evaluated product failures qualify. Failed independent API assertions remain failures even when the LLM says the reply passed. Correct permission denials, malformed actor requests, evaluator contract errors and ambiguous product outcomes do not become capability repairs. Sent payloads contain only operator-configured graph references, a hashed correlation ID, fixed typed diagnostic identifiers and failure category. Transcripts, family identifiers, observer values, credentials and judge narratives stay out of the shared queue.
+
+The client checkpoints intent before one `POST /api/internal/capabilities/incidents` with an idempotency key. It requires a receipt correlated to the canonical organization, product, role, references and exact sanitized context. A lost or mismatched receipt remains `submission_unknown`, including after restart. It reserves the run; neither the original product action nor the incident is automatically resubmitted. The library's `incidentClient.reconcile(input, receipt)` performs a GET-only lookup and checkpoints the result. Because the current service returns a bounded list, a missing entry is inconclusive and retains quarantine. Use the original saved step and contract for reconciliation.
+
+The dashboard displays the incident ID, registry version/digest and HAI queue delivery status alongside the original failed conversation. `incident_recorded`, queue delivery, a proposed patch and even a remote `resolved` flag all retain `effectVerified:false`. Only a fresh original-scenario test, neighbouring regressions and independent effect proof can establish a repair; this module never edits product business code or promotes a candidate automatically.
+
 ## Container deployment and runner
 
 Use **Docker Compose** for the running service. The repository remains importable as a Node module, but a container is the deployable unit: it gives the dashboard, scheduler, private evidence volume and service clients one predictable lifecycle without embedding Core services.
@@ -246,7 +281,7 @@ The dashboard binds to `127.0.0.1` locally. In Docker it listens on the containe
 
 The configured run directory stores private JSON snapshots and an append-only event journal. Only one server/CLI process may own a run directory at a time, so a second launch cannot rewrite the first process's active evidence. On restart, unfinished runs become `interrupted`; in-flight requests become `outcome_unknown`. They remain inspectable. There is deliberately no automatic action replay or unsafe resume. Exports include the campaign, enhanced personas, exact messages, per-turn verdicts, observer evidence and repair receipts, with credentials redacted. A run error, unavailable verifier or exhausted budget is visible rather than converted to success.
 
-This first version is a standalone local package and does not require CognitionOS. Its stable run/scenario/step/conversation/message/provider IDs and evidence can later be ingested into a shared capability/evaluation graph. Persist only concise evidence and decision provenance there, not private model reasoning or credentials. Product API state remains authoritative.
+The runner remains a standalone package; its optional Kora One integration uses the shared capability control plane rather than owning CognitionOS data. Stable run/scenario/step/conversation/message/provider IDs retain local evidence provenance; the incident carries an opaque correlation reference. Persist only concise evidence and decision provenance in the shared graph, not private model reasoning or credentials. Product API state remains authoritative.
 
 ## Repository and validation
 

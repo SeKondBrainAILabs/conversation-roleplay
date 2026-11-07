@@ -102,6 +102,8 @@ export class RunStore {
       run.status = 'interrupted';
       run.finishedAt = now();
       for (const step of run.steps) {
+        if (step.incident?.status === 'submitting')
+          step.incident.status = 'submission_unknown';
         if (step.inFlight) {
           step.status = 'outcome_unknown';
           step.error =

@@ -1,6 +1,12 @@
 /** Public embedding interface for product CI and custom adapters. */
 export { CampaignRun } from './engine.mjs';
 export { RunStore } from './store.mjs';
+export {
+  KoraOneIncidentClient,
+  capabilityIncident,
+  incidentEligible,
+  validateIncidentContract,
+} from './incidents.mjs';
 export { JsonChatModel, DemoModel } from './model.mjs';
 export {
   HttpConversationAdapter,

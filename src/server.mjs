@@ -97,7 +97,8 @@ export function createLab(
       run.steps?.some(
         (step) =>
           step.status === 'outcome_unknown' ||
-          RESERVED_REPAIR_STATES.has(step.repair?.status),
+          RESERVED_REPAIR_STATES.has(step.repair?.status) ||
+          RESERVED_REPAIR_STATES.has(step.incident?.status),
       ),
     ).length;
     return {
@@ -156,7 +157,8 @@ export function createLab(
       const uncertain = prior.steps?.some(
         (step) =>
           step.status === 'outcome_unknown' ||
-          RESERVED_REPAIR_STATES.has(step.repair?.status),
+          RESERVED_REPAIR_STATES.has(step.repair?.status) ||
+          RESERVED_REPAIR_STATES.has(step.incident?.status),
       );
       if (
         ['preparing', 'running', 'paused', 'stopping'].includes(prior.status) ||
@@ -174,6 +176,7 @@ export function createLab(
       repairAdapter: demo
         ? new DemoRepairAdapter()
         : serviceStack.repairAdapter,
+      incidentClient: demo ? undefined : serviceStack.incidentClient,
       store,
       secrets,
     });
@@ -443,6 +446,9 @@ export function createLab(
               verifierIds: hooks.verifiers.map((hook) => hook.id),
               fixtureIds: hooks.fixtures.map((hook) => hook.id),
               repairContractIds: hooks.repairs.map((hook) => hook.id),
+              incidentContractIds: (hooks.incidents ?? []).map(
+                (hook) => hook.id,
+              ),
               worlds: hooks.worlds,
             }),
           );

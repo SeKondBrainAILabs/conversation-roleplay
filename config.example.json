@@ -32,6 +32,19 @@
       "maxPolls": 20,
       "pollIntervalMs": 3000,
       "baseUrlEnv": "ROLEPLAY_HAI_BASE_URL"
+    },
+    "koraOne": {
+      "enabled": false,
+      "contractVerified": false,
+      "probeProduct": "piggybank",
+      "baseUrlEnv": "ROLEPLAY_KORA_ONE_BASE_URL",
+      "auth": {
+        "oauth": {
+          "tokenUrlEnv": "ROLEPLAY_OIDC_TOKEN_URL",
+          "clientIdEnv": "ROLEPLAY_KORA_ONE_OIDC_CLIENT_ID",
+          "clientSecretEnv": "ROLEPLAY_KORA_ONE_OIDC_CLIENT_SECRET"
+        }
+      }
     }
   },
   "targets": {
@@ -63,7 +76,8 @@
       "bindings": {},
       "verifiers": {},
       "fixtures": {},
-      "repairContracts": {}
+      "repairContracts": {},
+      "incidentContracts": {}
     },
     "basanti": {
       "type": "basanti",
@@ -73,7 +87,8 @@
       "bindings": {},
       "verifiers": {},
       "fixtures": {},
-      "repairContracts": {}
+      "repairContracts": {},
+      "incidentContracts": {}
     }
   }
 }
