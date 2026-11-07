@@ -44,6 +44,24 @@ export function validateCampaign(input) {
       input.scenarios.length <= LIMITS.scenarios,
     'Supply 1–100 scenarios',
   );
+  if (input.repairAnswers !== undefined)
+    assert(
+      isObject(input.repairAnswers) &&
+        Object.keys(input.repairAnswers).length <= 100 &&
+        Object.entries(input.repairAnswers).every(
+          ([key, values]) =>
+            identifier(key) &&
+            isObject(values) &&
+            Object.keys(values).length <= 12 &&
+            Object.entries(values).every(
+              ([id, answer]) =>
+                identifier(id) &&
+                typeof answer === 'string' &&
+                answer.length <= 500,
+            ),
+        ),
+      'Invalid reviewed HAI answer map',
+    );
   const scenarios = new Set();
   const result = clone(input);
   result.concurrency ??= 4;
@@ -159,6 +177,10 @@ export function validateGeneratedCampaign(
   campaign,
   { target, roles, verifierIds = [], fixtureIds = [], repairContractIds = [] },
 ) {
+  assert(
+    campaign.repairAnswers === undefined,
+    'Planner cannot author reviewed HAI answers',
+  );
   assert(campaign.target === target, 'Planner changed the target');
   assert(
     isDeepStrictEqual(campaign.roles, roles),

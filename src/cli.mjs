@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createLab } from './server.mjs';
 import { validateCampaign } from './contracts.mjs';
+import { preflightCampaignRepairs } from './clarifications.mjs';
 import { createServiceStack } from './services.mjs';
 
 const args = process.argv.slice(2);
@@ -19,6 +20,19 @@ const command = args[0] ?? 'serve';
 try {
   if (command === 'doctor') {
     const result = await createServiceStack(config).check();
+    console.log(JSON.stringify(result, null, 2));
+    process.exitCode = result.ready ? 0 : 1;
+  } else if (command === 'repair-preflight') {
+    const campaign = validateCampaign(
+      JSON.parse(readFileSync(resolve(args[1]), 'utf8')),
+    );
+    const target = config.targets?.[campaign.target];
+    if (!target) throw new Error('Unknown configured target');
+    const result = preflightCampaignRepairs(
+      campaign,
+      target.repairContracts,
+      createServiceStack(config).repairAdapter,
+    );
     console.log(JSON.stringify(result, null, 2));
     process.exitCode = result.ready ? 0 : 1;
   } else if (command === 'validate') {
@@ -62,7 +76,7 @@ try {
     } else {
       if (command !== 'serve')
         throw new Error(
-          'Use serve, run <campaign.json>, validate <campaign.json>, or doctor',
+          'Use serve, run <campaign.json>, validate <campaign.json>, repair-preflight <campaign.json>, or doctor',
         );
       const port = Number(option('--port', process.env.PORT ?? 4318));
       const host = option('--host', process.env.ROLEPLAY_HOST ?? '127.0.0.1');

@@ -110,11 +110,16 @@ export class RunStore {
           step.status = 'blocked';
         if (
           step.repair &&
-          ['submitting', 'polling'].includes(step.repair.status)
+          ['submitting', 'polling', 'answering_clarification'].includes(
+            step.repair.status,
+          )
         )
-          step.repair.status = step.repair.providerRunId
-            ? 'poll_interrupted'
-            : 'submission_unknown';
+          step.repair.status =
+            step.repair.status === 'answering_clarification'
+              ? 'clarification_submission_unknown'
+              : step.repair.providerRunId
+                ? 'poll_interrupted'
+                : 'submission_unknown';
       }
       this.save(run);
     }

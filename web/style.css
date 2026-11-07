@@ -1125,3 +1125,26 @@ summary {
     font-size: 7px;
   }
 }
+
+.step-activity {
+  margin: 12px 0;
+  padding: 10px 12px;
+  background: #eef3ff;
+  color: #334e87;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.step-activity small {
+  display: block;
+  opacity: 0.75;
+  margin-top: 3px;
+}
+.simulation-example {
+  margin-top: 24px;
+  font-size: 12px;
+  color: #697386;
+}
+.simulation-example button {
+  margin-top: 12px;
+}

@@ -51,9 +51,10 @@
       <section class="page-heading">
         <div>
           <div class="eyebrow">MULTI-ACTOR TESTING</div>
-          <h1 id="run-title">Watch the whole story unfold.</h1>
+          <h1 id="run-title">Follow actual conversations.</h1>
           <p id="run-subtitle">
-            Realistic roles. Parallel conversations. Outcomes you can inspect.
+            Actor messages, product replies and independent checks, as they
+            happen.
           </p>
         </div>
         <button class="primary new-run">Create campaign <span>↗</span></button>
@@ -61,34 +62,42 @@
       <div id="notice" class="notice hidden" role="status"></div>
       <section id="welcome" class="welcome">
         <div class="welcome-copy">
-          <span class="pill">READY TO EXPLORE</span>
-          <h2>One lesson.<br />Four perspectives.</h2>
+          <span class="pill">LIVE CAMPAIGNS</span>
+          <h2>Real messages.<br />Visible progress.</h2>
           <p>
-            A parent adds a lesson. A teacher schedules it and gives feedback. A
-            child asks how they did. Follow every handoff while other
-            conversations run alongside.
+            The latest live campaign opens here automatically. Watch each role
+            send messages to the connected product, wait for replies and verify
+            what actually happened. Saved runs remain available for inspection.
           </p>
-          <button class="primary" id="run-demo">
-            Run interactive demo <span>→</span></button
-          ><small>Local simulation · no LLM spend or product writes</small>
+          <button class="primary new-run">
+            Create a live campaign <span>→</span>
+          </button>
+          <small
+            >Requires configured QA identities and a connected product.</small
+          >
+          <details class="simulation-example">
+            <summary>Local developer simulation</summary>
+            <button id="run-demo">Run local simulation</button>
+            <small>Illustrative messages only · no product traffic</small>
+          </details>
         </div>
-        <div class="preview-story">
+        <div class="preview-story" aria-label="How progress is displayed">
           <div>
             <span class="avatar parent">M</span
-            ><span><b>Parent</b><small>Creates the reading lesson</small></span
-            ><span class="preview-check">✓</span>
+            ><span
+              ><b>Actor</b><small>Composing and sending a message</small></span
+            ><span class="preview-wait">…</span>
           </div>
           <div>
             <span class="avatar teacher">S</span
             ><span
               ><b>Teacher</b
               ><small>Schedules → attends → gives feedback</small></span
-            ><span class="preview-check">✓</span>
+            ><span class="preview-wait">…</span>
           </div>
           <div>
             <span class="avatar child">A</span
-            ><span
-              ><b>Child</b><small>Gets a useful feedback summary</small></span
+            ><span><b>Observer</b><small>Checking saved API state</small></span
             ><span class="preview-wait">…</span>
           </div>
           <div class="preview-note">
@@ -203,6 +212,13 @@ Parent adds a lesson, teacher schedules it, the lesson happens in QA, teacher gi
             spellcheck="false"
           ></textarea>
         </label>
+        <section class="detail-section">
+          <button type="button" id="check-hai-inputs">
+            Check HAI answers before starting
+          </button>
+          <p id="hai-preflight-status" class="muted" role="status"></p>
+          <div id="hai-preflight-questions"></div>
+        </section>
         <p class="form-note">
           Live targets need isolated QA identities and reviewed observer hooks
           in server configuration. Model-generated plans cannot invent endpoints

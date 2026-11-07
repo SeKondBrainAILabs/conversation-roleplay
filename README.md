@@ -11,6 +11,14 @@ The service deployment uses **Core Backend for canonical workspace identity**, *
 
 ![Conversation board showing four fictional actors and a simulated lesson lifecycle](docs/images/conversation-board.png)
 
+## Watch actual conversations
+
+The dashboard opens the active live campaign automatically and discovers newly started live runs every five seconds. It never starts a campaign by opening a page. Simulation runs are labelled separately and are only started explicitly under the developer example.
+
+Each role has a lane showing timestamped actor messages and actual product replies. A running step reports whether the actor is composing, the product reply is pending, independent API state is being read, the judge is evaluating, or HAI is working. Waiting time and the last event make stalled requests visible. Select a step for the full transcript, saved conversation/message IDs, observer checks and repair receipts; the timeline shows prerequisites and blocked handoffs. Copy the URL with `?run=RUN_ID` to reopen the exact saved run. A bookmarked or manually selected run stays selected when another campaign starts.
+
+Live campaigns need configured QA identities, service credentials and reviewed GET-only observers. The module does not manufacture replies or mark an assistant's success claim as verified. Actor/judge calls go through the configured model service; target calls go through the actual product adapter. This web-chat transport does not substitute for WhatsApp or voice qualification.
+
 ## Run locally
 
 Requires Node.js 22 or later. No package installation, product dependency or external service is needed for the demo.
@@ -56,12 +64,12 @@ flowchart LR
   Lab --> Evidence[(Private persistent run evidence)]
 ```
 
-| Service         | Used for                                                                                           | Contract and authority                                                                                                                                                                               |
-| --------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Core Backend    | Resolve the deployment's canonical workspace and service identity                                  | Authenticated `GET /auth/me`; organization must match the operator configuration. Core remains the identity system of record.                                                                        |
-| Core AI Backend | Role enhancement, scenario planning, adaptive actor turns and separately prompted semantic judging | `POST /v1/chat/completions`, proxy bearer service key, dedicated `X-App-Id` / `X-App-Key`, `X-Product: conversation-roleplay`. `model:auto` sends `model_selection` and verified workspace metadata. |
-| Kora HAI        | Bounded missing-capability proposal requests and polling                                           | `POST /v1/tasks`, then `GET /v1/runs/{run_id}`. Enable repair only for a reviewed product-specific protocol and service identity. A proposal cannot install or qualify itself.                       |
-| Target product  | Conversation, permission enforcement and saved business state                                      | Separate synthetic QA actor credentials and independent observer credentials, never the lab's service account.                                                                                       |
+| Service         | Used for                                                                                           | Contract and authority                                                                                                                                                                                                           |
+| --------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Core Backend    | Resolve the deployment's canonical workspace and service identity                                  | Authenticated `GET /auth/me`; organization must match the operator configuration. Core remains the identity system of record.                                                                                                    |
+| Core AI Backend | Role enhancement, scenario planning, adaptive actor turns and separately prompted semantic judging | `POST /v1/chat/completions`, proxy bearer service key, dedicated `X-App-Id` / `X-App-Key`, `X-Product: conversation-roleplay`. `model:auto` sends `model_selection` and verified workspace metadata.                             |
+| Kora HAI        | Bounded missing-capability proposal requests and polling                                           | `POST /v1/tasks`, `GET /v1/runs/{run_id}`, and bounded same-run `POST /v1/runs/{run_id}/clarify`. Enable repair only for a reviewed product-specific protocol and service identity. A proposal cannot install or qualify itself. |
+| Target product  | Conversation, permission enforcement and saved business state                                      | Separate synthetic QA actor credentials and independent observer credentials, never the lab's service account.                                                                                                                   |
 
 OIDC credentials use canonical `client_credentials`, cache tokens until shortly before expiry, and coalesce simultaneous token refreshes. No locally forged JWTs or production-user sessions are needed. Core Backend may provision the **dedicated service account** on its first authenticated lookup; do not point this setup at an arbitrary human identity. Core AI's app registration must be bound to that canonical workspace by an authorized administrator. Its app key is returned only once and belongs in a private secret file or secret manager.
 
@@ -177,6 +185,34 @@ Declare `repairContracts` under a target, then attach a `repairContractId` to an
   }
 }
 ```
+
+### Answer HAI before the campaign starts
+
+Configure each repair contract's `clarification.questions` once, then supply ordinary answers in the draft campaign's `repairAnswers`. The [example answer brief](examples/hai-repair-brief.json) shows a contract with questions about role, format, confirmation, installation, verification and language. Its API path is illustrative: bind only a real reviewed product operation.
+
+A question can derive its answer from a fixed contract `fact` (`goal`, `role`, `outputProtocol`, `operations`, `confirmation`, `installation`, `verification`), contain an operator-reviewed `answer`, or require a value from the campaign. Authority facts are read-only; campaign answers cannot override them. Questions are keyed by stable operator IDs. Typed runtime inputs use `inputField` and `inputType` (`string`, `number`, `boolean`). The map is scoped to a repair contract used by that campaign:
+
+```json
+{
+  "repairAnswers": {
+    "feedback": { "language": "English" }
+  }
+}
+```
+
+In the campaign designer, choose **Check HAI answers before starting**. Known facts are filled in; missing fields appear together. Editing answers updates the reviewable campaign JSON. The same check is available headlessly, without a model, product or HAI request:
+
+```sh
+node src/cli.mjs repair-preflight campaign.json --config config.local.json
+```
+
+The local HTTP equivalent is `POST /api/repairs/preflight` with the campaign JSON and the dashboard's `X-Roleplay-Token` CSRF header. It returns `{enabled,ready,contracts:[{contractId,ready,missing,questions}]}`. HTTP, CLI and library campaign starts enforce the same preflight before live traffic. An incomplete brief produces no HAI job; an operator or agent can supply the answers through the JSON/API without opening HAI's UX. Model-generated scenario plans cannot supply reviewed answers.
+
+For the native Piggy proposal protocol, the existing strict context is retained; its typed provider route already bypasses the general clarification gate. Negotiated generic HAI contracts receive `skip_clarification:true`, explicit `clarification_answers` and typed `input_data`, together with the reviewed Q&A in their task description. These fields match the inspected HAI task API; another provider must explicitly support them before enabling its integration.
+
+If the provider nevertheless asks a follow-up, the adaptor matches **reviewed question wording**, or an explicitly declared runtime input field with a compatible type and constraints, rather than assuming that `q1` always means the same thing. It posts a complete approved answer batch to the **same** provider run, checkpoints intent before the POST, validates the resume receipt and polls for the result. It never posts an empty/partial batch, selects a suggested default, invents an attachment or grants new permissions. Stale/reordered question polls do not cause repeated answers; at most three distinct rounds are sent. An ambiguous acceptance is quarantined without retry, including after restart. Questions outside the reviewed brief remain visible as unresolved evidence and reserve that run; providers that ignore headless mode can still require review. This is not a blanket auto-approval or a guarantee that arbitrary future questions have answers.
+
+Keep answers generic. Do not include credentials, real-family data, URLs or copied private conversations in a reusable repair brief. A resumed provider run or valid proposal still requires the existing product-controlled validation and promotion checks.
 
 The built-in proposal envelope defaults to the inspected `piggybank.api_capability_proposal.v1` provider contract. That is a **product-specific provider contract**, not a universal role protocol. Another product requires its own negotiated protocol/service scope or a custom repair adapter. Service credentials alone do not establish compatibility. The example leaves repair submission disabled while retaining the remote HAI connection. HAI feedback/revision, product installation, graph publication and automatic post-install retesting are not implemented. This module does not deploy changes to connected products.
 
