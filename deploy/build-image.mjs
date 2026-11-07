@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream, mkdirSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { get } from 'node:http';
 import { assert, sleep } from '../src/util.mjs';
 
 const revision = process.env.GITHUB_SHA;
@@ -16,6 +17,36 @@ const docker = (...args) =>
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
+// Node fetch may replace Host with the mapped ephemeral port. Use the native client
+// so the probe preserves the same Host/Origin boundary as the published dashboard.
+const readJson = (url) =>
+  new Promise((resolve, reject) => {
+    const request = get(
+      url,
+      { headers: { Host: '127.0.0.1:4318' }, timeout: 2000 },
+      (response) => {
+        let body = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk) => {
+          body += chunk;
+          if (body.length > 10000)
+            request.destroy(new Error('Oversized smoke response'));
+        });
+        response.on('end', () => {
+          try {
+            assert(response.statusCode === 200, 'Container smoke HTTP failure');
+            resolve(JSON.parse(body));
+          } catch (error) {
+            reject(error);
+          }
+        });
+      },
+    );
+    request.on('timeout', () =>
+      request.destroy(new Error('Container smoke timeout')),
+    );
+    request.on('error', reject);
+  });
 const architecture = docker('info', '--format', '{{.Architecture}}');
 const arch = ['aarch64', 'arm64'].includes(architecture)
   ? 'arm64'
@@ -49,9 +80,7 @@ try {
   let healthy = false;
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
-      const health = await (
-        await fetch(`http://127.0.0.1:${port}/healthz`)
-      ).json();
+      const health = await readJson(`http://127.0.0.1:${port}/healthz`);
       healthy = health.status === 'ok' && health.revision === revision;
     } catch {
       /* Wait for Node startup. */
@@ -60,9 +89,7 @@ try {
     await sleep(500);
   }
   assert(healthy, 'Container health/revision smoke failed');
-  const readiness = await (
-    await fetch(`http://127.0.0.1:${port}/readyz`)
-  ).json();
+  const readiness = await readJson(`http://127.0.0.1:${port}/readyz`);
   assert(
     readiness.ready && readiness.mode === 'demo-or-custom',
     'Offline container must remain usable',
