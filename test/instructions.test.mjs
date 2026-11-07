@@ -5,6 +5,7 @@ import {
   CampaignRun,
   HttpConversationAdapter,
   validateCampaign,
+  JsonChatModel,
 } from '../src/index.mjs';
 
 const instructions = [
@@ -48,6 +49,63 @@ const verified = () => ({
     label: item.id,
     passed: true,
   })),
+});
+
+test('compound judge transport explicitly requests the IDs in its actual response contract', async () => {
+  const model = new JsonChatModel({
+    url: 'https://model.example',
+    model: 'test',
+  });
+  const request = await model.transport('judge', { instructions });
+  const system = request.body.messages.find(
+    (message) => message.role === 'system',
+  ).content;
+  assert.match(system, /instructions array in the response is MANDATORY/);
+  for (const item of instructions)
+    assert.ok(system.includes(JSON.stringify({ id: item.id }).slice(0, -1)));
+  const plain = await model.transport('judge', {});
+  assert.ok(
+    !plain.body.messages[0].content.includes('Required response shape:'),
+  );
+});
+
+test('invalid evaluator output is retained as unverified and cannot trigger a product replay', async () => {
+  const raw = {
+    verdict: 'pass',
+    goalComplete: true,
+    reason: 'An aggregate opinion without clauses',
+  };
+  let sends = 0;
+  const value = campaign();
+  const run = new CampaignRun(value, {
+    actorModel: {
+      kind: 'llm',
+      complete: async (purpose) =>
+        purpose === 'enhance'
+          ? { roles: value.roles.map((role) => ({ ...role, persona: {} })) }
+          : {
+              message: 'Create both tasks.',
+              done: false,
+              instructionIds: ['first', 'second'],
+            },
+    },
+    judgeModel: { kind: 'llm', complete: async () => raw },
+    adapter: {
+      kind: 'http',
+      config: {},
+      send: async () => {
+        sends++;
+        return { text: 'Both saved', status: 200 };
+      },
+      verify: async () => verified(),
+    },
+  });
+  const result = await run.start();
+  assert.equal(result.steps[0].status, 'unverified');
+  assert.equal(result.steps[0].errorSource, 'evaluator');
+  assert.deepEqual(result.steps[0].judgment, raw);
+  assert.equal(result.qualified, false);
+  assert.equal(sends, 1);
 });
 
 test('partial compound success cannot be promoted by an overall pass', () => {
