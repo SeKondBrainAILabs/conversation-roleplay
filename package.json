@@ -1,0 +1,29 @@
+{
+  "name": "@sekondbrain/conversation-roleplay",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SeKondBrainAILabs/conversation-roleplay.git"
+  },
+  "homepage": "https://github.com/SeKondBrainAILabs/conversation-roleplay#readme",
+  "bugs": {
+    "url": "https://github.com/SeKondBrainAILabs/conversation-roleplay/issues"
+  },
+  "type": "module",
+  "description": "Independent multi-actor conversation lab with parallel scenarios, outcome checks and HAI repair evidence.",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": "./src/index.mjs",
+  "bin": {
+    "conversation-roleplay": "./src/cli.mjs"
+  },
+  "scripts": {
+    "start": "node src/cli.mjs serve",
+    "demo": "node src/cli.mjs run examples/lesson-lifecycle.json --demo",
+    "test": "node --test test/*.test.mjs",
+    "check": "node scripts/check.mjs"
+  }
+}

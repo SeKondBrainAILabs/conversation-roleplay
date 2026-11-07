@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Roleplay Lab · Conversation testing</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <aside class="sidebar">
+      <a class="brand" href="/"
+        ><span class="brand-mark">R</span
+        ><span>Roleplay <b>Lab</b><small>CONVERSATION TESTING</small></span></a
+      >
+      <button class="primary new-run">＋ New campaign</button>
+      <div class="sidebar-label">WORKSPACE <span>LOCAL</span></div>
+      <nav>
+        <button class="nav-item selected" id="nav-live">
+          ◉ <span>Conversations</span></button
+        ><button class="nav-item" id="nav-timeline">
+          ⌁ <span>Scenario timeline</span>
+        </button>
+      </nav>
+      <div class="sidebar-label">
+        RECENT RUNS
+        <button id="refresh-runs" aria-label="Refresh runs">↻</button>
+      </div>
+      <div id="run-list" class="run-list">
+        <p class="muted">Your campaigns will appear here.</p>
+      </div>
+      <div class="sidebar-footer">
+        <span class="connection-dot"></span
+        ><span id="connection">Local workspace</span
+        ><small>Credentials stay on the server.</small>
+      </div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <span
+          >Workspace <span class="slash">/</span>
+          <strong>Conversation lab</strong></span
+        ><span class="local-badge">LOCAL PREVIEW</span>
+      </header>
+      <section class="page-heading">
+        <div>
+          <div class="eyebrow">MULTI-ACTOR TESTING</div>
+          <h1 id="run-title">Watch the whole story unfold.</h1>
+          <p id="run-subtitle">
+            Realistic roles. Parallel conversations. Outcomes you can inspect.
+          </p>
+        </div>
+        <button class="primary new-run">Create campaign <span>↗</span></button>
+      </section>
+      <div id="notice" class="notice hidden" role="status"></div>
+      <section id="welcome" class="welcome">
+        <div class="welcome-copy">
+          <span class="pill">READY TO EXPLORE</span>
+          <h2>One lesson.<br />Four perspectives.</h2>
+          <p>
+            A parent adds a lesson. A teacher schedules it and gives feedback. A
+            child asks how they did. Follow every handoff while other
+            conversations run alongside.
+          </p>
+          <button class="primary" id="run-demo">
+            Run interactive demo <span>→</span></button
+          ><small>Local simulation · no LLM spend or product writes</small>
+        </div>
+        <div class="preview-story">
+          <div>
+            <span class="avatar parent">M</span
+            ><span><b>Parent</b><small>Creates the reading lesson</small></span
+            ><span class="preview-check">✓</span>
+          </div>
+          <div>
+            <span class="avatar teacher">S</span
+            ><span
+              ><b>Teacher</b
+              ><small>Schedules → attends → gives feedback</small></span
+            ><span class="preview-check">✓</span>
+          </div>
+          <div>
+            <span class="avatar child">A</span
+            ><span
+              ><b>Child</b><small>Gets a useful feedback summary</small></span
+            ><span class="preview-wait">…</span>
+          </div>
+          <div class="preview-note">
+            ↳ Steps wait for verified outcomes, not an assistant’s claim.
+          </div>
+        </div>
+      </section>
+      <section id="workspace" class="hidden">
+        <div class="run-toolbar">
+          <div class="run-meta">
+            <span id="run-status" class="status"></span
+            ><span id="target-label"></span
+            ><span id="demo-label" class="pill hidden"
+              >SIMULATED · NOT QUALIFIED</span
+            >
+          </div>
+          <div class="controls">
+            <button id="pause-run">Pause</button
+            ><button id="stop-run">Stop</button
+            ><a id="export-run" class="button" href="#">Export JSON ↗</a>
+          </div>
+        </div>
+        <div class="metrics">
+          <div>
+            <span>ACTOR LANES</span><strong id="metric-actors">0</strong
+            ><small>Separate conversations</small>
+          </div>
+          <div>
+            <span>MESSAGES</span><strong id="metric-messages">0</strong
+            ><small>All roles combined</small>
+          </div>
+          <div>
+            <span>STEPS COMPLETE</span><strong id="metric-steps">0 / 0</strong
+            ><small id="metric-waiting">Waiting for prerequisites</small>
+          </div>
+          <div>
+            <span>ISSUES FOUND</span><strong id="metric-issues">0</strong
+            ><small id="metric-repairs">No repair requests</small>
+          </div>
+        </div>
+        <div class="view-toolbar">
+          <div class="tabs">
+            <button id="view-board" class="active">Conversation board</button
+            ><button id="view-timeline">Scenario timeline</button
+            ><button id="view-events">Event log</button>
+          </div>
+          <div class="live-label">
+            <span class="connection-dot"></span
+            ><span id="live-state">Live updates</span>
+          </div>
+        </div>
+        <div id="board" class="board"></div>
+        <div id="timeline" class="timeline hidden"></div>
+        <div id="events" class="event-log hidden"></div>
+      </section>
+    </main>
+    <dialog id="campaign-dialog">
+      <form id="campaign-form">
+        <div class="dialog-heading">
+          <div>
+            <div class="eyebrow">CAMPAIGN DESIGNER</div>
+            <h2>Give your actors a world.</h2>
+          </div>
+          <button
+            type="button"
+            class="icon-button close-dialog"
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        <div class="form-grid">
+          <label>Target system<select id="campaign-target"></select></label
+          ><label
+            >Campaign name<input
+              id="campaign-name"
+              value="Lesson lifecycle and parallel exploration"
+              required
+              maxlength="160"
+          /></label>
+        </div>
+        <label
+          >What should they try?<textarea id="campaign-brief" rows="3">
+Parent adds a lesson, teacher schedules it, the lesson happens in QA, teacher gives feedback, and the child reads a summary. In parallel, test delegated task queries, corrections and cancellation.</textarea
+          >
+        </label>
+        <label
+          >Roles
+          <span class="muted"
+            >one per line: identifier | display name | description</span
+          ><textarea id="campaign-roles" rows="5"></textarea>
+        </label>
+        <div class="designer-actions">
+          <button type="button" id="enhance-roles">
+            ✧ Enhance role prompts</button
+          ><button type="button" id="generate-plan">
+            ✧ Generate scenario sequences</button
+          ><span id="planning-state" class="muted"></span>
+        </div>
+        <details id="personas-panel" class="hidden">
+          <summary>Enhanced personas</summary>
+          <pre id="personas"></pre>
+        </details>
+        <label
+          >Reviewable campaign JSON
+          <span class="muted"
+            >Dependencies, turn limits and configured verifiers</span
+          ><textarea
+            id="campaign-json"
+            class="code-editor"
+            rows="13"
+            spellcheck="false"
+          ></textarea>
+        </label>
+        <p class="form-note">
+          Live targets need isolated QA identities and reviewed observer hooks
+          in server configuration. Model-generated plans cannot invent endpoints
+          or verifiers.
+        </p>
+        <div class="dialog-footer">
+          <span id="form-error" class="error" role="alert"></span
+          ><button type="button" class="close-dialog">Cancel</button
+          ><button type="submit" class="primary">Start campaign →</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="detail-dialog">
+      <div class="dialog-heading">
+        <div>
+          <div class="eyebrow" id="detail-label"></div>
+          <h2 id="detail-title"></h2>
+        </div>
+        <button
+          type="button"
+          class="icon-button"
+          id="close-detail"
+          aria-label="Close"
+        >
+          ×
+        </button>
+      </div>
+      <div id="detail-body"></div>
+    </dialog>
+  </body>
+</html>

@@ -1,0 +1,8 @@
+node_modules/
+.roleplay-runs/
+config.local.json
+.env
+.env.*
+!.env.example
+*.private.json
+test-output/

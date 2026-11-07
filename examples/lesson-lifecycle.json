@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "name": "A lesson, from planning to the child’s feedback",
+  "target": "demo",
+  "concurrency": 4,
+  "maxModelCalls": 100,
+  "roles": [
+    {
+      "id": "parent",
+      "name": "Maya · Parent",
+      "description": "A busy parent coordinating reading lessons for fictional child Ari QA. Changes her mind occasionally and expects clear receipts."
+    },
+    {
+      "id": "teacher",
+      "name": "Sam · Teacher",
+      "description": "A teacher who schedules assigned lessons, records attendance and gives specific, constructive feedback. Cannot manage family money."
+    },
+    {
+      "id": "child",
+      "name": "Ari · Child",
+      "description": "A curious ten-year-old who wants to understand teacher feedback in friendly language. Can read their own feedback only."
+    },
+    {
+      "id": "assistant",
+      "name": "Leena · Assistant",
+      "description": "A delegated assistant who checks assigned tasks and schedules. Has no parent membership or financial authority."
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "lessonLifecycle",
+      "title": "Reading lesson lifecycle",
+      "worldId": "lessonQA",
+      "steps": [
+        {
+          "id": "createLesson",
+          "actorId": "parent",
+          "goal": "Add a reading practice lesson for Ari QA. Review the details before saving and confirm the actual saved lesson.",
+          "effect": "write",
+          "verifierId": "demoState",
+          "exports": { "lesson": "lesson" },
+          "maxTurns": 3
+        },
+        {
+          "id": "scheduleLesson",
+          "actorId": "teacher",
+          "goal": "Schedule the reading lesson the parent just created. Confirm its child, date and time.",
+          "dependsOn": ["createLesson"],
+          "effect": "write",
+          "verifierId": "demoState",
+          "exports": { "scheduled": "scheduled" },
+          "maxTurns": 3
+        },
+        {
+          "id": "lessonHappens",
+          "actorId": "teacher",
+          "kind": "fixture",
+          "fixtureId": "lessonHappens",
+          "goal": "Advance the isolated QA lesson to completed using the reviewed fixture hook. Do not pretend real time has elapsed.",
+          "dependsOn": ["scheduleLesson"],
+          "effect": "write",
+          "verifierId": "demoState",
+          "exports": { "happened": "happened" }
+        },
+        {
+          "id": "recordFeedback",
+          "actorId": "teacher",
+          "goal": "Record feedback: Ari read clearly and should practise longer words. Check that feedback is attached to the completed lesson.",
+          "dependsOn": ["lessonHappens"],
+          "effect": "write",
+          "verifierId": "demoState",
+          "exports": { "feedback": "feedback" },
+          "maxTurns": 3
+        },
+        {
+          "id": "readSummary",
+          "actorId": "child",
+          "goal": "Ask what the teacher said about your reading lesson. Request a friendly summary and one thing to practise.",
+          "dependsOn": ["recordFeedback"],
+          "effect": "read",
+          "verifierId": "demoState",
+          "maxTurns": 3
+        }
+      ]
+    },
+    {
+      "id": "delegatedTasks",
+      "title": "A separate assistant conversation",
+      "worldId": "assistantQA",
+      "steps": [
+        {
+          "id": "checkTasks",
+          "actorId": "assistant",
+          "goal": "Show my assigned tasks for today. Ask for the due time and reward of the reading task only.",
+          "verifierId": "demoState",
+          "maxTurns": 3
+        }
+      ]
+    },
+    {
+      "id": "repairVisibility",
+      "title": "Seeded failure and HAI proposal visibility",
+      "worldId": "repairQA",
+      "steps": [
+        {
+          "id": "missingCapability",
+          "actorId": "parent",
+          "goal": "Show a reading progress comparison across the last three lessons.",
+          "verifierId": "demoState",
+          "repairContractId": "demoGap",
+          "maxTurns": 3
+        },
+        {
+          "id": "dependentCheck",
+          "actorId": "child",
+          "goal": "Read the newly generated progress summary only after it was actually verified.",
+          "dependsOn": ["missingCapability"],
+          "verifierId": "demoState"
+        }
+      ]
+    }
+  ]
+}

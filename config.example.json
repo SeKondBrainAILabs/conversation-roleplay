@@ -1,0 +1,51 @@
+{
+  "llm": {
+    "url": "http://127.0.0.1:8080/v1/llm-proxy/chat/completions",
+    "model": "CONFIGURE_A_MODEL_YOUR_PROVIDER_SUPPORTS",
+    "headersEnv": { "Authorization": "ROLEPLAY_LLM_TOKEN" },
+    "jsonMode": false,
+    "timeoutMs": 180000
+  },
+  "hai": {
+    "enabled": false,
+    "contractVerified": false,
+    "baseUrl": "http://127.0.0.1:8002",
+    "protocol": "piggybank.api_capability_proposal.v1",
+    "headersEnv": {
+      "x-app-id": "ROLEPLAY_HAI_APP_ID",
+      "x-app-key": "ROLEPLAY_HAI_APP_KEY"
+    },
+    "maxPolls": 20,
+    "pollIntervalMs": 3000
+  },
+  "targets": {
+    "piggybank": {
+      "type": "piggybank",
+      "label": "PiggyBank · isolated QA",
+      "baseUrl": "http://127.0.0.1:3000",
+      "qaOnly": true,
+      "identity": {
+        "path": "/api/auth/me",
+        "assertions": [
+          { "path": "data.id", "op": "eq", "expected": "$actor.userId" },
+          { "path": "data.role", "op": "eq", "expected": "$actor.role" },
+          { "path": "data.familyId", "op": "eq", "expected": "$actor.familyId" }
+        ]
+      },
+      "bindings": {},
+      "verifiers": {},
+      "fixtures": {},
+      "repairContracts": {}
+    },
+    "basanti": {
+      "type": "basanti",
+      "label": "Basanti · isolated QA staff chat",
+      "baseUrl": "http://127.0.0.1:3001",
+      "qaOnly": true,
+      "bindings": {},
+      "verifiers": {},
+      "fixtures": {},
+      "repairContracts": {}
+    }
+  }
+}
