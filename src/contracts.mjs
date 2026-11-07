@@ -111,9 +111,48 @@ export function validateCampaign(input) {
         roles.has(step.actorId) && text(step.goal),
         'Every step needs a known actor and bounded goal',
       );
+      if (step.instructions !== undefined) {
+        assert(
+          Array.isArray(step.instructions) &&
+            step.instructions.length >= 2 &&
+            step.instructions.length <= 12,
+          'Compound steps need 2–12 instructions',
+        );
+        const ids = new Set();
+        for (const instruction of step.instructions) {
+          assert(
+            isObject(instruction) &&
+              identifier(instruction.id) &&
+              !ids.has(instruction.id) &&
+              text(instruction.text, 1000),
+            'Instructions need unique IDs and bounded text',
+          );
+          assert(
+            instruction.effect === undefined ||
+              ['read', 'write', 'none'].includes(instruction.effect),
+            'Invalid instruction effect',
+          );
+          assert(
+            instruction.expectation === undefined ||
+              ['complete', 'refuse'].includes(instruction.expectation),
+            'Invalid instruction expectation',
+          );
+          ids.add(instruction.id);
+        }
+      }
       step.kind ??= 'conversation';
+      assert(
+        !step.instructions || step.kind === 'conversation',
+        'Compound instructions require a conversation step',
+      );
       step.effect ??= 'read';
+      assert(
+        !step.instructions?.some((item) => item.effect === 'write') ||
+          step.effect === 'write',
+        'Compound write instructions require a write step',
+      );
       step.dependsOn ??= [];
+      step.after ??= [];
       step.maxTurns ??= 4;
       assert(
         ['conversation', 'fixture'].includes(step.kind),
@@ -156,6 +195,11 @@ export function validateCampaign(input) {
             ),
           'Exports must be named JSON paths into verified evidence',
         );
+      assert(
+        Array.isArray(step.after) &&
+          new Set(step.after).size === step.after.length,
+        'Invalid conversation ordering',
+      );
       steps.set(step.id, step);
     }
     const visit = (id, visiting = new Set(), visited = new Set()) => {
@@ -163,11 +207,27 @@ export function validateCampaign(input) {
       assert(!visiting.has(id), 'Scenario dependencies contain a cycle');
       if (visited.has(id)) return;
       visiting.add(id);
-      for (const dep of steps.get(id).dependsOn) visit(dep, visiting, visited);
+      for (const dep of [...steps.get(id).dependsOn, ...steps.get(id).after])
+        visit(dep, visiting, visited);
       visiting.delete(id);
       visited.add(id);
     };
-    for (const step of steps.values()) visit(step.id);
+    for (const step of steps.values()) {
+      for (const id of step.after) {
+        const previous = steps.get(id);
+        assert(
+          previous &&
+            previous.actorId === step.actorId &&
+            step.kind === 'conversation' &&
+            previous.kind === 'conversation' &&
+            step.effect !== 'write' &&
+            previous.effect !== 'write' &&
+            !step.exports,
+          'Non-gating follow-ups require the same actor, read-only conversation and no exported artifacts',
+        );
+      }
+      visit(step.id);
+    }
   }
   return result;
 }

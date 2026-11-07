@@ -2,6 +2,7 @@
 import { EventEmitter } from 'node:events';
 import { preflightCampaignRepairs } from './clarifications.mjs';
 import { validateCampaign } from './contracts.mjs';
+import { instructionResults } from './instructions.mjs';
 import { assert, at, clone, now, redact, sleep, uuid } from './util.mjs';
 
 const good = new Set(['passed', 'simulated']);
@@ -138,6 +139,22 @@ export class CampaignRun extends EventEmitter {
       ),
     );
   }
+  orderedPredecessors(step) {
+    return (step.after ?? []).map((id) =>
+      this.state.steps.find(
+        (other) => other.scenarioId === step.scenarioId && other.id === id,
+      ),
+    );
+  }
+  followupAncestors(step, result = new Set()) {
+    for (const previous of this.orderedPredecessors(step)) {
+      if (!result.has(previous.id)) {
+        result.add(previous.id);
+        this.followupAncestors(previous, result);
+      }
+    }
+    return result;
+  }
   sharedFacts(step) {
     return Object.fromEntries(
       this.dependencies(step).map((dependency) => [
@@ -211,9 +228,18 @@ export class CampaignRun extends EventEmitter {
           (step) => step.status === 'pending',
         )) {
           const dependencies = this.dependencies(step);
+          const ordered = this.orderedPredecessors(step);
           if (
             dependencies.some(
               (dep) => terminal.has(dep.status) && !good.has(dep.status),
+            ) ||
+            ordered.some(
+              (dep) =>
+                terminal.has(dep.status) &&
+                (['outcome_unknown', 'stopped', 'blocked'].includes(
+                  dep.status,
+                ) ||
+                  !dep.transcript.some((turn) => turn.role === 'assistant')),
             )
           ) {
             step.status = 'blocked';
@@ -227,7 +253,10 @@ export class CampaignRun extends EventEmitter {
             if (
               step.status !== 'pending' ||
               this.activeActors.has(this.actorKey(step)) ||
-              !this.dependencies(step).every((dep) => good.has(dep.status))
+              !this.dependencies(step).every((dep) => good.has(dep.status)) ||
+              !this.orderedPredecessors(step).every((dep) =>
+                terminal.has(dep.status),
+              )
             )
               continue;
             step.status = 'running';
@@ -292,12 +321,15 @@ export class CampaignRun extends EventEmitter {
     step.startedAt = now();
     const actor = this.state.roles.find((role) => role.id === step.actorId);
     // Actors share a conversation within one scenario, never with other scenarios or roles.
+    const followups = this.followupAncestors(step);
     const prior = this.state.steps.filter(
       (other) =>
         other !== step &&
         other.scenarioId === step.scenarioId &&
         other.actorId === step.actorId &&
-        good.has(other.status),
+        (good.has(other.status) ||
+          (followups.has(other.id) &&
+            other.transcript.some((turn) => turn.role === 'assistant'))),
     );
     step.conversationId = prior.at(-1)?.conversationId ?? uuid();
     const history = prior.flatMap((other) =>
@@ -357,10 +389,25 @@ export class CampaignRun extends EventEmitter {
           this.activity(step, 'composing');
           const action = await this.model(this.actorModel, 'actor', {
             actor,
-            step,
+            step: {
+              id: step.id,
+              goal: step.goal,
+              effect: step.effect,
+              maxTurns: step.maxTurns,
+              instructions: clone(step.instructions),
+            },
             sharedFacts: input.shared,
             conversationHistory: history,
-            transcript: step.transcript,
+            transcript: step.transcript.map(({ role, text }) => ({
+              role,
+              text,
+            })),
+            latestVerification: step.verification
+              ? { status: step.verification.status }
+              : undefined,
+            instructionResults: step.instructionResults?.map(
+              ({ id, status, apiStatus }) => ({ id, status, apiStatus }),
+            ),
           });
           assert(
             typeof action.message === 'string' &&
@@ -368,6 +415,18 @@ export class CampaignRun extends EventEmitter {
               typeof action.done === 'boolean',
             'Actor returned an invalid turn',
           );
+          if (!step.transcript.length && step.instructions?.length) {
+            assert(
+              Array.isArray(action.instructionIds) &&
+                action.instructionIds.length === step.instructions.length &&
+                new Set(action.instructionIds).size ===
+                  action.instructionIds.length &&
+                step.instructions.every((instruction) =>
+                  action.instructionIds.includes(instruction.id),
+                ),
+              'Actor did not include every requested instruction in its opening turn',
+            );
+          }
           if (action.done && step.transcript.length) break;
           if (turn === step.maxTurns) break;
           assert(
@@ -433,12 +492,20 @@ export class CampaignRun extends EventEmitter {
             verification: step.verification,
             sharedFacts: input.shared,
             phase: 'in_progress',
+            instructions: step.instructions,
           });
+          // Preserve the evaluator's actual output even if its contract is invalid.
+          step.judgment = clone(lastJudgment);
           assert(
             ['pass', 'fail', 'uncertain'].includes(lastJudgment.verdict) &&
               typeof lastJudgment.goalComplete === 'boolean' &&
               typeof lastJudgment.reason === 'string',
             'Invalid judge verdict',
+          );
+          step.instructionResults = instructionResults(
+            step,
+            lastJudgment,
+            step.verification,
           );
           step.judgment = lastJudgment;
           step.transcript.at(-1).judgment = clone(lastJudgment);
@@ -446,12 +513,21 @@ export class CampaignRun extends EventEmitter {
             status: step.verification.status,
             checks: step.verification.checks,
           };
+          step.transcript.at(-1).instructionResults = clone(
+            step.instructionResults,
+          );
           this.record('turn.evaluated', {
             ...ref,
             verdict: lastJudgment.verdict,
           });
           // A discovered failure stays visible; further blind writes do not make it a pass.
-          if (lastJudgment.verdict === 'fail') break;
+          if (
+            lastJudgment.verdict === 'fail' ||
+            step.instructionResults.some((item) =>
+              ['failed', 'invalid_request'].includes(item.status),
+            )
+          )
+            break;
         }
         if (!step.judgment)
           throw new Error('No completed target turn was evaluated');
@@ -462,12 +538,16 @@ export class CampaignRun extends EventEmitter {
         Boolean(step.exports);
       if (
         step.judgment.verdict === 'fail' ||
-        step.verification?.status === 'failed'
+        step.verification?.status === 'failed' ||
+        step.instructionResults?.some((item) =>
+          ['failed', 'invalid_request'].includes(item.status),
+        )
       )
         step.status = 'failed';
       else if (
         step.judgment.verdict !== 'pass' ||
         !step.judgment.goalComplete ||
+        step.instructionResults?.some((item) => item.status !== 'passed') ||
         (observerNeeded && step.verification?.status !== 'passed')
       )
         step.status = 'unverified';
@@ -505,12 +585,19 @@ export class CampaignRun extends EventEmitter {
         });
       }
     } catch (error) {
+      const evaluatorError =
+        !step.inFlight &&
+        step.activity?.phase === 'evaluating' &&
+        !this.controller.signal.aborted;
       step.status =
         step.inFlight || error.outcomeUnknown
           ? 'outcome_unknown'
           : this.controller.signal.aborted
             ? 'stopped'
-            : 'failed';
+            : evaluatorError
+              ? 'unverified'
+              : 'failed';
+      if (evaluatorError) step.errorSource = 'evaluator';
       step.error = error.message;
       if (!step.inFlight) delete step.pendingMessageId;
     }
