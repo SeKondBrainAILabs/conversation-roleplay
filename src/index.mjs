@@ -20,3 +20,9 @@ export {
   ServiceCredentials,
   createServiceStack,
 } from './services.mjs';
+
+export {
+  prepareRepairAnswers,
+  preflightCampaignRepairs,
+  resolveProviderQuestions,
+} from './clarifications.mjs';

@@ -325,6 +325,9 @@ export function createServiceStack(config = {}, options = {}) {
               return {
                 reachable: true,
                 taskContractVerified: true,
+                clarificationContractVerified: Boolean(
+                  data.paths?.['/v1/runs/{run_id}/clarify']?.post,
+                ),
                 repairEnabled: hai.enabled === true,
                 repairVerified: false,
               };

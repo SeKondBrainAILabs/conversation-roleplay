@@ -1,0 +1,50 @@
+{
+  "summary": "Read assigned lesson feedback with its lesson identity and role scope.",
+  "role": "coach",
+  "expectedOperationIds": ["feedback-read"],
+  "operations": [
+    {
+      "id": "feedback-read",
+      "apiPath": "/api/lessons/feedback",
+      "apiMethod": "get",
+      "roles": ["coach"],
+      "category": "read",
+      "requiresConfirmation": false
+    }
+  ],
+  "clarification": {
+    "questions": [
+      {
+        "id": "role",
+        "text": "Which role should this support?",
+        "fact": "role"
+      },
+      {
+        "id": "format",
+        "text": "Which output protocol should be returned?",
+        "fact": "outputProtocol"
+      },
+      {
+        "id": "confirmation",
+        "text": "What confirmation rules apply?",
+        "fact": "confirmation"
+      },
+      {
+        "id": "installation",
+        "text": "May the proposal execute or install itself?",
+        "fact": "installation"
+      },
+      {
+        "id": "verification",
+        "text": "How must success be verified?",
+        "fact": "verification"
+      },
+      {
+        "id": "language",
+        "text": "Which language should the explanation use?",
+        "inputField": "language",
+        "inputType": "string"
+      }
+    ]
+  }
+}
