@@ -7,10 +7,20 @@ import {
   jsonRequest,
   safePath,
   sleep,
+  isObject,
 } from './util.mjs';
 import { isDeepStrictEqual } from 'node:util';
 import { createHash } from 'node:crypto';
 
+function partialMatch(value, expected) {
+  return isObject(expected)
+    ? isObject(value) &&
+        Object.entries(expected).every(
+          ([key, item]) =>
+            Object.hasOwn(value, key) && partialMatch(value[key], item),
+        )
+    : isDeepStrictEqual(value, expected);
+}
 function check(assertion, evidence, context) {
   const actual = at(evidence, assertion.path);
   const expected = bind(assertion.expected, context);
@@ -31,6 +41,12 @@ function check(assertion, evidence, context) {
         typeof actual === 'string' &&
         typeof expected === 'string' &&
         actual.includes(expected)
+      );
+    case 'matches':
+      return (
+        Array.isArray(actual) &&
+        actual.filter((item) => partialMatch(item, expected)).length ===
+          (assertion.count ?? 1)
       );
     case 'length':
       return Array.isArray(actual) && actual.length === expected;
@@ -127,6 +143,25 @@ export class HttpConversationAdapter {
         hook && (hook.method ?? 'GET') === 'GET' && hook.assertions?.length,
         'Step needs an existing GET-only verifier with assertions',
       );
+      const reads = hook.reads ? Object.values(hook.reads) : [hook];
+      assert(
+        reads.length > 0 &&
+          reads.length <= 12 &&
+          reads.every(
+            (read) =>
+              (read.method ?? 'GET') === 'GET' && typeof read.path === 'string',
+          ),
+        'Observers require 1–12 configured GET-only reads',
+      );
+      for (const instruction of input.step.instructions ?? []) {
+        if ((instruction.effect ?? input.step.effect) === 'write')
+          assert(
+            hook.assertions.some(
+              (rule) => rule.instructionId === instruction.id,
+            ),
+            'Each write instruction needs its own configured API assertions',
+          );
+      }
       for (const rule of hook.assertions) {
         assert(
           typeof rule.path === 'string' &&
@@ -138,9 +173,24 @@ export class HttpConversationAdapter {
               'contains',
               'length',
               'unchanged',
+              'matches',
             ].includes(rule.op),
           'Invalid observer assertion',
         );
+        assert(
+          rule.op !== 'matches' ||
+            (isObject(rule.expected) &&
+              (rule.count === undefined ||
+                (Number.isInteger(rule.count) && rule.count >= 0))),
+          'Invalid match assertion',
+        );
+        if (rule.instructionId)
+          assert(
+            input.step.instructions?.some(
+              (item) => item.id === rule.instructionId,
+            ),
+            'Observer refers to an unknown instruction',
+          );
         assert(
           ['exists', 'unchanged'].includes(rule.op) ||
             Object.hasOwn(rule, 'expected'),
@@ -160,7 +210,7 @@ export class HttpConversationAdapter {
     await this.guard(input, options?.signal);
     if (input.step.verifierId) {
       // Failed final-state predicates are normal before an action; an unavailable observer is not.
-      const before = await this.verify(input, options);
+      const before = await this.verify(input, { ...options, settle: false });
       return before.evidence;
     }
   }
@@ -286,7 +336,28 @@ export class HttpConversationAdapter {
         : {}),
     };
   }
-  async verify(input, { signal } = {}) {
+  async verify(input, { signal, settle = true } = {}) {
+    const hook = this.config.verifiers?.[input.step.verifierId];
+    const attempts = settle ? (hook?.settleAttempts ?? 1) : 1;
+    const interval = hook?.settleIntervalMs ?? 300;
+    assert(
+      Number.isInteger(attempts) &&
+        attempts >= 1 &&
+        attempts <= 10 &&
+        Number.isInteger(interval) &&
+        interval >= 0 &&
+        interval <= 5000,
+      'Invalid bounded observer settling policy',
+    );
+    let receipt;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      receipt = await this.observe(input, { signal });
+      if (receipt.status !== 'failed') break;
+      if (attempt + 1 < attempts) await sleep(interval, signal);
+    }
+    return receipt;
+  }
+  async observe(input, { signal } = {}) {
     const hook = this.config.verifiers?.[input.step.verifierId];
     if (!hook)
       return {
@@ -301,15 +372,46 @@ export class HttpConversationAdapter {
     await this.guard(input, signal);
     const binding = this.binding(input.worldId, input.actor.id);
     const context = this.context(input);
-    const { data } = await this.request(
-      { ...hook, method: 'GET', body: undefined },
-      context,
-      envHeaders(binding.observerHeadersEnv ?? binding.headersEnv, this.env),
-      signal,
-    );
+    let data;
+    if (hook.reads) {
+      const reads = Object.entries(hook.reads);
+      assert(
+        reads.length > 0 &&
+          reads.length <= 12 &&
+          reads.every(
+            ([id, read]) =>
+              /^[A-Za-z][\w-]{0,63}$/.test(id) &&
+              (read.method ?? 'GET') === 'GET',
+          ),
+        'Composite observers require 1–12 named GET-only reads',
+      );
+      data = Object.fromEntries(
+        await Promise.all(
+          reads.map(async ([id, read]) => {
+            const receipt = await this.request(
+              { ...read, method: 'GET', body: undefined },
+              context,
+              envHeaders(
+                binding.observerHeadersEnv ?? binding.headersEnv,
+                this.env,
+              ),
+              signal,
+            );
+            return [id, receipt.data];
+          }),
+        ),
+      );
+    } else
+      ({ data } = await this.request(
+        { ...hook, method: 'GET', body: undefined },
+        context,
+        envHeaders(binding.observerHeadersEnv ?? binding.headersEnv, this.env),
+        signal,
+      ));
     const checks = hook.assertions.map((rule) => ({
       label: rule.label ?? `${rule.path} ${rule.op}`,
       passed: check(rule, data, context),
+      ...(rule.instructionId ? { instructionId: rule.instructionId } : {}),
     }));
     return {
       status: checks.every((rule) => rule.passed) ? 'passed' : 'failed',
