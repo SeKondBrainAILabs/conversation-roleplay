@@ -116,6 +116,18 @@ Live targets must declare a GET-only `identity` hook with assertions against the
 
 The PiggyBank and Basanti envelopes were checked against local source contracts. Real product credentials, verified deployment revisions and fixture hooks are intentionally not bundled. A new live run is required before claiming either product works with the complete workflow.
 
+## Multiple instructions and conversational follow-ups
+
+An actor represents an actual platform user type, such as parent, child, teacher, nanny, caregiver or assistant. Bind each person to their own authenticated QA account and its real family relationships and permissions. Personas change how a person speaks; they never grant authority.
+
+A compound step declares `instructions: [{id, text, effect, expectation}]` with 2–12 distinct requests. `expectation` is `complete` by default, or `refuse` for an explicit permission-boundary test. The actor must include all instructions together in its opening message and identifies the included IDs. The independent judge checks each request separately, including whether the actor actually asked it. A missing actor request is labelled `invalid_request`; it is not silently attributed to the product. An overall judge pass cannot override a failed, incomplete or unverified instruction.
+
+Each write instruction needs API assertions tagged with its `instructionId` in the configured verifier before any product message is sent. A verifier can use `reads: {tasks: {path: ...}, wallet: {path: ...}}` to collect up to twelve named GET-only receipts. Its assertions address the combined evidence, for example `tasks.data`, and can use `op: "matches"`, a partial expected object and an exact `count` to detect missing, duplicate or wrongly assigned records. For an asynchronous effect, the operator may configure `settleAttempts` (1–10) and `settleIntervalMs` (0–5000): only GET observers are repeated, never actor/model/write requests. Pre-action snapshots do not wait for a future effect. The model does not choose observer endpoints. Completed writes are provided to the actor as independent evidence so a clarification does not blindly repeat them.
+
+Use `dependsOn` for handoffs that require a verified successful effect. For a natural read-only clarification after a known bad reply, use `after: [previousStepId]`: the same person's history and conversation ID are retained, but the original failure remains in the report. `after` cannot follow writes, change actors, export unverified facts, or continue an uncertain/stopped request. Independent people can converse in parallel; requests for the same person in the same family are serialized.
+
+The board shows the number of instructions passed on each step. Open its detail panel for individual semantic verdicts and API checks. Per-turn results remain in the exported transcript. See `examples/multi-instruction.json` for a campaign shape; live identities and the named verifiers must be configured before it can run.
+
 ## Define scenarios and actual outcomes
 
 Campaigns are versioned JSON. The dashboard's generator produces a **reviewable draft**, never a claim that it ran. It can only reference operator-configured verifier, fixture and repair IDs. Review goals, prerequisites and hooks before starting. The role enhancer can add a persona but cannot change the supplied role identity or description; product permissions never come from the persona.

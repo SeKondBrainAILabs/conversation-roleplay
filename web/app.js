@@ -110,6 +110,25 @@ function attach(run) {
 function bubble(turn) {
   return `<div class="bubble ${escape(turn.role)}"><span class="bubble-label">${turn.role === 'user' ? 'ACTOR' : 'PRODUCT REPLY'}${turn.at ? ` · ${escape(new Date(turn.at).toLocaleTimeString())}` : ''}</span>${escape(turn.text)}</div>`;
 }
+const prerequisites = (step) => [...step.dependsOn, ...(step.after ?? [])];
+function instructionSummary(step) {
+  if (!step.instructions?.length) return '';
+  const passed = (step.instructionResults ?? []).filter(
+    (item) => item.status === 'passed',
+  ).length;
+  return `<div class="instruction-summary">Instructions: ${passed} / ${step.instructions.length} passed</div>`;
+}
+function instructionDetail(step) {
+  if (!step.instructions?.length) return '';
+  return `<section class="detail-section"><h3>Each instruction</h3>${step.instructions
+    .map((instruction) => {
+      const result = step.instructionResults?.find(
+        (item) => item.id === instruction.id,
+      );
+      return `<div class="instruction-item">${status(result?.status ?? 'pending')}<strong>${escape(instruction.text)}</strong><small>Expected: ${escape(instruction.expectation ?? 'complete')} · API: ${escape(result?.apiStatus ?? 'pending')}</small>${result?.semantic?.reason ? `<p>${escape(result.semantic.reason)}</p>` : ''}</div>`;
+    })
+    .join('')}</section>`;
+}
 function activity(step) {
   if (step.status !== 'running') return '';
   const labels = {
@@ -141,7 +160,7 @@ function render() {
   $('workspace').classList.remove('hidden');
   $('run-title').textContent = current.name;
   $('run-subtitle').textContent =
-    `${current.campaign.scenarios.length} scenarios · ${current.roles.length} roles · up to ${current.campaign.concurrency} conversations at once`;
+    `${current.campaign.scenarios.length} scenarios · ${current.roles.length} people · up to ${current.campaign.concurrency} conversations at once`;
   $('run-status').outerHTML =
     `<span id="run-status" class="status ${escape(current.status)}">${escape(title(current.status))}</span>`;
   $('target-label').textContent = current.target;
@@ -196,7 +215,7 @@ function render() {
         steps
           .map((step) => {
             const index = current.steps.indexOf(step);
-            return `<article class="step-card" tabindex="0" role="button" data-step="${index}" aria-label="Inspect ${escape(title(step.id))}"><div class="step-card-top"><div><strong>${escape(title(step.id))}</strong><small>${escape(step.scenarioTitle)}</small></div>${status(step.status)}</div>${!step.transcript.length ? `<div class="step-goal">${escape(step.goal)}</div>` : step.transcript.slice(-4).map(bubble).join('')}${activity(step)}${step.status === 'pending' ? `<div class="waiting-copy">↳ ${step.dependsOn.length ? `Waiting for ${escape(step.dependsOn.map(title).join(', '))}` : 'Ready when a lane is available'}</div>` : ''}${step.repair ? `<div class="repair-tag">✧ HAI · ${escape(title(step.repair.status))} · ${step.repair.effectVerified ? 'effect verified' : 'not a verified fix'}</div>` : ''}<div class="card-footer ${['failed', 'unverified', 'outcome_unknown'].includes(step.status) ? 'issue' : ''}"><span>${escape(step.error ?? step.judgment?.reason ?? (step.kind === 'fixture' ? 'QA fixture event' : 'No messages yet'))}</span><span>↗</span></div></article>`;
+            return `<article class="step-card" tabindex="0" role="button" data-step="${index}" aria-label="Inspect ${escape(title(step.id))}"><div class="step-card-top"><div><strong>${escape(title(step.id))}</strong><small>${escape(step.scenarioTitle)}</small></div>${status(step.status)}</div>${!step.transcript.length ? `<div class="step-goal">${escape(step.goal)}</div>` : step.transcript.slice(-4).map(bubble).join('')}${instructionSummary(step)}${activity(step)}${step.status === 'pending' ? `<div class="waiting-copy">↳ ${prerequisites(step).length ? `Waiting for ${escape(prerequisites(step).map(title).join(', '))}` : 'Ready when a lane is available'}</div>` : ''}${step.repair ? `<div class="repair-tag">✧ HAI · ${escape(title(step.repair.status))} · ${step.repair.effectVerified ? 'effect verified' : 'not a verified fix'}</div>` : ''}<div class="card-footer ${['failed', 'unverified', 'outcome_unknown'].includes(step.status) ? 'issue' : ''}"><span>${escape(step.error ?? step.judgment?.reason ?? (step.kind === 'fixture' ? 'QA fixture event' : 'No messages yet'))}</span><span>↗</span></div></article>`;
           })
           .join('') || '<p class="waiting-copy">No steps assigned yet.</p>'
       }</div></section>`;
@@ -209,7 +228,7 @@ function render() {
           .filter((step) => step.scenarioId === scenario.id)
           .map(
             (step) =>
-              `<div class="timeline-step" data-step="${current.steps.indexOf(step)}" tabindex="0" role="button">${status(step.status)}<h4>${escape(title(step.id))}</h4><p>${escape(current.roles.find((role) => role.id === step.actorId).name)}</p><small>${step.dependsOn.length ? `Depends on: ${escape(step.dependsOn.map(title).join(', '))}` : 'Independent start'}</small>${step.kind === 'fixture' ? '<small>Explicit QA fixture · not a chat</small>' : ''}</div>`,
+              `<div class="timeline-step" data-step="${current.steps.indexOf(step)}" tabindex="0" role="button">${status(step.status)}<h4>${escape(title(step.id))}</h4><p>${escape(current.roles.find((role) => role.id === step.actorId).name)}</p><small>${prerequisites(step).length ? `Follows: ${escape(prerequisites(step).map(title).join(', '))}` : 'Independent start'}</small>${step.kind === 'fixture' ? '<small>Explicit QA fixture · not a chat</small>' : ''}</div>`,
           )
           .join('')}</div></section>`,
     )
@@ -231,7 +250,7 @@ function renderDetail(index) {
   $('detail-title').textContent = title(step.id);
   $('detail-label').textContent = step.scenarioTitle;
   $('detail-body').innerHTML =
-    `<div class="detail-meta">${status(step.status)}<span>${escape(current.roles.find((role) => role.id === step.actorId).name)}</span><span>World ${escape(step.worldId)}</span></div><p class="muted">${escape(step.goal)}</p>${step.error ? `<pre>${escape(step.error)}</pre>` : ''}${activity(step)}<section class="detail-section"><h3>Conversation</h3>${step.transcript.length ? step.transcript.map((turn) => `${bubble(turn)}${turn.judgment ? `<div class="detail-verdict">${escape(title(turn.judgment.verdict))} · ${escape(turn.judgment.reason)}</div>` : ''}`).join('') : '<p class="muted">No conversation messages. Fixture and blocked steps are recorded separately.</p>'}</section><section class="detail-section"><h3>Independent API verification</h3><ul class="check-list">${(step.verification?.checks ?? []).map((rule) => `<li><span class="${rule.passed ? 'check-pass' : 'check-fail'}">${rule.passed ? '✓' : '×'}</span>${escape(rule.label)}</li>`).join('') || '<li>No independent verification receipt yet.</li>'}</ul><details><summary>Observer evidence and shared artifacts</summary><pre>${escape(pretty({ verification: step.verification, sharedArtifacts: step.artifacts, conversationId: step.conversationId, pendingMessageId: step.pendingMessageId }))}</pre></details></section><section class="detail-section"><h3>HAI repair</h3>${step.repair ? `<p class="muted">${escape(step.repair.reason)}</p><pre>${escape(pretty(step.repair))}</pre>` : '<p class="muted">No repair requested. Correct permission denials are not capability gaps.</p>'}</section>`;
+    `<div class="detail-meta">${status(step.status)}<span>${escape(current.roles.find((role) => role.id === step.actorId).name)}</span><span>World ${escape(step.worldId)}</span></div><p class="muted">${escape(step.goal)}</p>${step.error ? `<pre>${escape(step.error)}</pre>` : ''}${instructionDetail(step)}${activity(step)}<section class="detail-section"><h3>Conversation</h3>${step.transcript.length ? step.transcript.map((turn) => `${bubble(turn)}${turn.judgment ? `<div class="detail-verdict">${escape(title(turn.judgment.verdict))} · ${escape(turn.judgment.reason)}</div>` : ''}`).join('') : '<p class="muted">No conversation messages. Fixture and blocked steps are recorded separately.</p>'}</section><section class="detail-section"><h3>Independent API verification</h3><ul class="check-list">${(step.verification?.checks ?? []).map((rule) => `<li><span class="${rule.passed ? 'check-pass' : 'check-fail'}">${rule.passed ? '✓' : '×'}</span>${escape(rule.label)}</li>`).join('') || '<li>No independent verification receipt yet.</li>'}</ul><details><summary>Observer evidence and shared artifacts</summary><pre>${escape(pretty({ verification: step.verification, sharedArtifacts: step.artifacts, conversationId: step.conversationId, pendingMessageId: step.pendingMessageId }))}</pre></details></section><section class="detail-section"><h3>HAI repair</h3>${step.repair ? `<p class="muted">${escape(step.repair.reason)}</p><pre>${escape(pretty(step.repair))}</pre>` : '<p class="muted">No repair requested. Correct permission denials are not capability gaps.</p>'}</section>`;
 }
 function openDesigner() {
   if (!designerInitialized) {

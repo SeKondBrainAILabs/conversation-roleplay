@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "name": "Parent and child: compound tasks and corrections",
+  "target": "piggybank",
+  "concurrency": 2,
+  "maxModelCalls": 60,
+  "roles": [
+    {
+      "id": "parent",
+      "name": "Maya · Parent",
+      "description": "A parent coordinating two children's chores. Uses concise natural requests and checks what was saved."
+    },
+    {
+      "id": "child",
+      "name": "Milo · Child",
+      "description": "A child who asks about their own tasks and clarifies answers they do not understand."
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "compoundChores",
+      "worldId": "configuredFamily",
+      "title": "Two instructions, a correction and a child handoff",
+      "steps": [
+        {
+          "id": "createBoth",
+          "actorId": "parent",
+          "goal": "Ask for both chores in a single message; answer clarification questions without recreating verified tasks.",
+          "effect": "write",
+          "maxTurns": 4,
+          "verifierId": "bothChores",
+          "instructions": [
+            {
+              "id": "milo",
+              "text": "Add a five-minute reading chore for Milo, due tomorrow at 6pm with a reward of 3.",
+              "effect": "write"
+            },
+            {
+              "id": "nora",
+              "text": "Add a tidy-desk chore for Nora, due tomorrow at 7pm with a reward of 2.",
+              "effect": "write"
+            }
+          ]
+        },
+        {
+          "id": "correctTime",
+          "actorId": "parent",
+          "dependsOn": ["createBoth"],
+          "goal": "Change only Milo's due time while preserving Nora's task.",
+          "effect": "write",
+          "maxTurns": 3,
+          "verifierId": "correctedChores",
+          "instructions": [
+            {
+              "id": "moveMilo",
+              "text": "Move Milo's reading chore to 5pm tomorrow.",
+              "effect": "write"
+            },
+            {
+              "id": "keepNora",
+              "text": "Leave Nora's chore, due time and reward unchanged.",
+              "effect": "read"
+            }
+          ]
+        },
+        {
+          "id": "readOwnTask",
+          "actorId": "child",
+          "dependsOn": ["correctTime"],
+          "goal": "Ask naturally for your saved task and its details without changing anything.",
+          "effect": "read",
+          "maxTurns": 2,
+          "verifierId": "ownTask",
+          "instructions": [
+            { "id": "taskName", "text": "Ask what chore you have to do." },
+            {
+              "id": "dueReward",
+              "text": "Ask when it is due and how much you can earn."
+            }
+          ]
+        },
+        {
+          "id": "clarifyOwnTask",
+          "actorId": "child",
+          "after": ["readOwnTask"],
+          "goal": "Continue the same conversation, clarifying the earlier answer. Do not create, complete or reward any task.",
+          "effect": "read",
+          "maxTurns": 2,
+          "verifierId": "ownTaskFollowup",
+          "instructions": [
+            {
+              "id": "whichTask",
+              "text": "Ask whether the earlier answer refers to your reading chore."
+            },
+            {
+              "id": "savedOnly",
+              "text": "Ask for its actual saved status, without marking it done."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
