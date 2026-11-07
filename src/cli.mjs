@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createLab } from './server.mjs';
 import { validateCampaign } from './contracts.mjs';
+import { createServiceStack } from './services.mjs';
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => {
@@ -16,7 +17,11 @@ const config = configPath
   : {};
 const command = args[0] ?? 'serve';
 try {
-  if (command === 'validate') {
+  if (command === 'doctor') {
+    const result = await createServiceStack(config).check();
+    console.log(JSON.stringify(result, null, 2));
+    process.exitCode = result.ready ? 0 : 1;
+  } else if (command === 'validate') {
     const campaign = validateCampaign(
       JSON.parse(readFileSync(resolve(args[1]), 'utf8')),
     );
@@ -29,7 +34,9 @@ try {
     );
   } else {
     const lab = createLab(config, {
-      directory: resolve(option('--runs', '.roleplay-runs')),
+      directory: resolve(
+        option('--runs', process.env.ROLEPLAY_RUNS_DIR ?? '.roleplay-runs'),
+      ),
     });
     if (command === 'run') {
       const campaign = JSON.parse(readFileSync(resolve(args[1]), 'utf8'));
@@ -55,10 +62,11 @@ try {
     } else {
       if (command !== 'serve')
         throw new Error(
-          'Use serve, run <campaign.json>, or validate <campaign.json>',
+          'Use serve, run <campaign.json>, validate <campaign.json>, or doctor',
         );
       const port = Number(option('--port', process.env.PORT ?? 4318));
-      lab.server.listen(port, '127.0.0.1', () =>
+      const host = option('--host', process.env.ROLEPLAY_HOST ?? '127.0.0.1');
+      lab.server.listen(port, host, () =>
         console.log(
           `Conversation Roleplay: http://127.0.0.1:${lab.server.address().port}`,
         ),

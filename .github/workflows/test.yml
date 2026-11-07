@@ -16,3 +16,26 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: node src/cli.mjs validate examples/lesson-lifecycle.json
+  container:
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node deploy/build-image.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: conversation-roleplay-linux-${{ matrix.arch }}
+          path: image-artifact/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

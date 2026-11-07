@@ -1,35 +1,63 @@
 {
-  "llm": {
-    "url": "http://127.0.0.1:8080/v1/llm-proxy/chat/completions",
-    "model": "CONFIGURE_A_MODEL_YOUR_PROVIDER_SUPPORTS",
-    "headersEnv": { "Authorization": "ROLEPLAY_LLM_TOKEN" },
-    "jsonMode": false,
-    "timeoutMs": 180000
-  },
-  "hai": {
-    "enabled": false,
-    "contractVerified": false,
-    "baseUrl": "http://127.0.0.1:8002",
-    "protocol": "piggybank.api_capability_proposal.v1",
-    "headersEnv": {
-      "x-app-id": "ROLEPLAY_HAI_APP_ID",
-      "x-app-key": "ROLEPLAY_HAI_APP_KEY"
+  "services": {
+    "required": ["coreBackend", "coreAi", "hai"],
+    "coreBackend": {
+      "baseUrlEnv": "ROLEPLAY_CORE_BASE_URL",
+      "organizationIdEnv": "ROLEPLAY_ORGANIZATION_ID",
+      "auth": {
+        "oauth": {
+          "tokenUrlEnv": "ROLEPLAY_OIDC_TOKEN_URL",
+          "clientIdEnv": "ROLEPLAY_OIDC_CLIENT_ID",
+          "clientSecretEnv": "ROLEPLAY_OIDC_CLIENT_SECRET"
+        }
+      }
     },
-    "maxPolls": 20,
-    "pollIntervalMs": 3000
+    "coreAi": {
+      "baseUrlEnv": "ROLEPLAY_CORE_AI_BASE_URL",
+      "model": "auto",
+      "serviceKeyEnv": "ROLEPLAY_CORE_AI_SERVICE_KEY",
+      "appIdEnv": "ROLEPLAY_CORE_AI_APP_ID",
+      "appKeyEnv": "ROLEPLAY_CORE_AI_APP_KEY",
+      "jsonMode": true,
+      "localOnly": false
+    },
+    "hai": {
+      "enabled": false,
+      "contractVerified": false,
+      "protocol": "piggybank.api_capability_proposal.v1",
+      "headersEnv": {
+        "x-app-id": "ROLEPLAY_HAI_APP_ID",
+        "x-app-key": "ROLEPLAY_HAI_APP_KEY"
+      },
+      "maxPolls": 20,
+      "pollIntervalMs": 3000,
+      "baseUrlEnv": "ROLEPLAY_HAI_BASE_URL"
+    }
   },
   "targets": {
     "piggybank": {
       "type": "piggybank",
-      "label": "PiggyBank · isolated QA",
+      "label": "PiggyBank \u00b7 isolated QA",
       "baseUrl": "http://127.0.0.1:3000",
       "qaOnly": true,
       "identity": {
         "path": "/api/auth/me",
         "assertions": [
-          { "path": "data.id", "op": "eq", "expected": "$actor.userId" },
-          { "path": "data.role", "op": "eq", "expected": "$actor.role" },
-          { "path": "data.familyId", "op": "eq", "expected": "$actor.familyId" }
+          {
+            "path": "data.id",
+            "op": "eq",
+            "expected": "$actor.userId"
+          },
+          {
+            "path": "data.role",
+            "op": "eq",
+            "expected": "$actor.role"
+          },
+          {
+            "path": "data.familyId",
+            "op": "eq",
+            "expected": "$actor.familyId"
+          }
         ]
       },
       "bindings": {},
@@ -39,7 +67,7 @@
     },
     "basanti": {
       "type": "basanti",
-      "label": "Basanti · isolated QA staff chat",
+      "label": "Basanti \u00b7 isolated QA staff chat",
       "baseUrl": "http://127.0.0.1:3001",
       "qaOnly": true,
       "bindings": {},

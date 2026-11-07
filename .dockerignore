@@ -1,0 +1,12 @@
+.git
+.github
+.roleplay-runs
+node_modules
+.env
+.env.*
+config.local.json
+*.private.json
+test-output
+docs
+test
+deploy
