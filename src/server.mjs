@@ -443,6 +443,7 @@ export function createLab(
               verifierIds: hooks.verifiers.map((hook) => hook.id),
               fixtureIds: hooks.fixtures.map((hook) => hook.id),
               repairContractIds: hooks.repairs.map((hook) => hook.id),
+              worlds: hooks.worlds,
             }),
           );
         } finally {
