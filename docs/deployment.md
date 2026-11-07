@@ -27,11 +27,11 @@ Compose starts with a five-minute drain lease so a deployment can verify readine
 
 `host.docker.internal` means the machine running Docker. When using a second machine, set the service origins to its resolvable private DNS name or address. `localhost` inside this container cannot reach another machine. Mint OIDC credentials through the configured canonical HTTPS issuer, even when the data-plane services use trusted private HTTP routes. Never disable issuer verification to make a route work.
 
-## Hosted builds, host-side pull deployment
+## Hosted builds and verified deployment
 
 The workflow runs the full test suite on Node 22 and 24, then builds native `linux/arm64` and `linux/amd64` images on hosted runners. Each build starts its image with the same filesystem/capability restrictions, checks health and source revision, and uploads a Docker archive with a manifest containing the commit, workflow run, platform, build image ID, portable configuration digest and archive SHA-256. Artifacts are retained for 30 days. This does not publish an npm package or require a public registry account.
 
-The host-side runner is installed from a trusted reviewed checkout, separate from the container. It:
+The host-side deployer is installed from a trusted reviewed checkout, separate from the container. Its legacy polling mode follows `main`; tagged SDDMini mode follows `SDDMiniFeet` and independently verifies the annotated release. It:
 
 1. Reads the current remote `main` commit and looks for its successful, first-attempt **push** run of `.github/workflows/test.yml`. Pull-request runs and incomplete or unsuccessful builds are ineligible.
 2. Downloads that run's one matching architecture artifact. Verifies its commit, run, platform, archive checksum and single expected image tag; loads the image and independently checks its platform and OCI source/revision labels. It exports the imported image again and checks that the portable configuration digest, including its root filesystem layer identities, still matches the build. This works across classic Docker and containerd stores, which may report different engine-specific image IDs for the same configuration.
@@ -55,7 +55,35 @@ node deploy/install-launchd.mjs /absolute/private/roleplay/runner.json
 launchctl print gui/$(id -u)/ai.sekondbrain.conversation-roleplay.deploy
 ```
 
-The LaunchAgent checks every five minutes and writes private logs under the configured deployment directory. It needs Docker/Compose and authenticated `gh` on its PATH. Public PR code never runs as a self-hosted Actions job on this host. On Linux, use the same one-shot command from a restricted systemd timer. Do not mount host credentials or the Docker socket in the roleplay container.
+The LaunchAgent checks every five minutes and writes private logs under the configured deployment directory. It needs Docker/Compose and authenticated `gh` on its PATH. This legacy polling path does not require a self-hosted Actions runner. Disable its LaunchAgent before enabling the SDDMini release path below so only one mechanism owns deployment. On Linux, use the same one-shot command from a restricted systemd timer. Do not mount host credentials or the Docker socket in the roleplay container.
+
+## SDDMini releases on Kora Feet
+
+The release workflow `.github/workflows/sddmini-release.yml` deploys only new annotated `SDDMini-KF/vX.Y.Z` tags. The tag must resolve directly to the current `SDDMiniFeet` branch commit, whose first-attempt `test.yml` **push** build must have completed successfully. Tests and native ARM64/AMD64 image builds continue on GitHub-hosted runners. The self-hosted job consumes that exact ARM64 artifact and records the tag, release workflow run, build run, archive checksum and portable image identity in its receipt. `main` pushes alone do not deploy this mode.
+
+Keep a dedicated repository-scoped macOS ARM64 runner, labelled `kora-feet` and `conversation-roleplay-sddmini`. Do not use this runner for PRs, tests, arbitrary scripts, or other repositories. The job does not check out the repository or run a repository action: its only step calls the pinned host deployment wrapper. The `SDDMini` environment accepts only `SDDMini-KF/v*` tags. Release concurrency never cancels an existing deployment.
+
+A mandatory **job-started hook** rejects other repositories, PR/branch/manual events, different workflows/jobs, reruns, lightweight/moved tags, branch drift and any workflow bytes not matching the host-reviewed SHA-256. The hook checks GitHub-provided context and independently reads the run, annotated tag, branch and workflow through the API. The wrapper repeats authorization and pins the revision before staging. This is a guard for a trusted deployment host, not an isolation boundary for arbitrary untrusted code. Keep external contributor approval enabled; do not add checkout or action steps to this workflow without reviewing and updating the host policy.
+
+Install the latest supported official Actions runner for macOS ARM64 using GitHub's repository runner setup instructions. Verify the download's published SHA-256. Use a private directory under the service user's home so the LaunchAgent does not depend on macOS protected-volume permissions. Give the runner only this repository's registration token, not an organization-wide registration. Do not put registration tokens in files or command history. The runner can use `ACTIONS_RUNNER_INPUT_TOKEN` during unattended configuration; remove it from the environment afterwards.
+
+After reviewing the deploy code and completing checks, run from its **clean committed checkout**:
+
+```sh
+node deploy/install-sddmini.mjs /absolute/private/roleplay/runner.json
+```
+
+This pins a trusted copy by commit and writes private `policy.json`, deployment config, `guard.sh` and `run-release.mjs` under `$HOME/.local/share/conversation-roleplay/sddmini`. Configure `ACTIONS_RUNNER_HOOK_JOB_STARTED` to that absolute `guard.sh` path in the runner's service environment **before starting the service**. The host needs Node 22+, Docker Compose, and authenticated `gh` with access to the repository's contents and build artifacts. Never supply those host credentials or the Docker socket to the roleplay container. Install the official runner as a per-user LaunchAgent so it reconnects after login. Check it is online with the expected labels before pushing a release.
+
+The normal delivery sequence is a reviewed PR and successful checks, a merge into the desired release branch, successful exact-commit branch push CI, then a **new unused annotated tag** at its unchanged head:
+
+```sh
+git fetch origin SDDMiniFeet
+git tag -a SDDMini-KF/v0.1.0 origin/SDDMiniFeet -m 'SDDMini Feet 0.1.0'
+git push origin refs/tags/SDDMini-KF/v0.1.0
+```
+
+The example version is not an instruction to reuse an existing tag. Check local and remote refs first and choose the next unused version. Monitor that one workflow; never retag or rerun an unchanged release. A failed/deferred run has not established deployment. Inspect the reservation/readiness cause, make any necessary tested repair, and issue a fresh tag. Updating a workflow intentionally requires separately reviewing and reinstalling the trusted host copy/hash. The Actions job cannot update its own trust policy.
 
 ## Observation and recovery
 
