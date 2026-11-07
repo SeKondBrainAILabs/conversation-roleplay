@@ -37,7 +37,8 @@ export function instructionResults(step, judgment, verification) {
         : 'not_required';
     const status = !answer.requestIncluded
       ? 'invalid_request'
-      : answer.verdict === 'fail' || apiStatus === 'failed'
+      : answer.verdict === 'fail' ||
+          (apiStatus === 'failed' && answer.goalComplete)
         ? 'failed'
         : answer.verdict === 'pass' &&
             answer.goalComplete &&

@@ -88,6 +88,25 @@ test('an instruction never asked by the actor is an invalid test request', () =>
     'invalid_request',
   );
 });
+test('unfinished clarification can continue without treating unsaved final effects as completed', () => {
+  const api = verified();
+  api.checks.forEach((check) => {
+    check.passed = false;
+  });
+  const judge = judgment();
+  judge.verdict = 'uncertain';
+  judge.goalComplete = false;
+  judge.instructions.forEach((item) => {
+    item.verdict = 'uncertain';
+    item.goalComplete = false;
+  });
+  assert.deepEqual(
+    instructionResults(step, judge, api).map((item) => item.status),
+    ['unverified', 'unverified'],
+  );
+  judge.instructions[0].goalComplete = true;
+  assert.equal(instructionResults(step, judge, api)[0].status, 'failed');
+});
 test('compound schema rejects disguised writes and duplicate instructions', () => {
   assert.throws(
     () => validateCampaign(campaign({ ...step, effect: 'read' })),
