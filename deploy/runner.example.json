@@ -1,0 +1,13 @@
+{
+  "repository": "SeKondBrainAILabs/conversation-roleplay",
+  "workflow": "test.yml",
+  "platform": "linux/arm64",
+  "directory": "/absolute/private/roleplay/deployment",
+  "configFile": "/absolute/private/roleplay/config.json",
+  "envFile": "/absolute/private/roleplay/services.env",
+  "composeFile": "/absolute/trusted/conversation-roleplay/deploy/compose.yml",
+  "dashboard": "http://127.0.0.1:4318",
+  "deployTokenEnv": "ROLEPLAY_DEPLOY_TOKEN",
+  "allowInitialInstall": true,
+  "requireServicesReady": true
+}

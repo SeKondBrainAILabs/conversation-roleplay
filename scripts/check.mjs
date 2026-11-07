@@ -10,7 +10,12 @@ const walk = (path) =>
         ? [join(path, entry.name)]
         : [],
   );
-for (const file of [...walk('src'), ...walk('web'), ...walk('test')]) {
+for (const file of [
+  ...walk('src'),
+  ...walk('web'),
+  ...walk('test'),
+  ...walk('deploy'),
+]) {
   const result = spawnSync(process.execPath, ['--check', file], {
     stdio: 'inherit',
   });

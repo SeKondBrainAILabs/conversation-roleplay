@@ -131,10 +131,11 @@ export function validateProposal(
 }
 
 export class HaiRepairAdapter {
-  constructor(config, { env = process.env, fetchImpl } = {}) {
+  constructor(config, { env = process.env, fetchImpl, getHeaders } = {}) {
     this.config = config;
     this.env = env;
     this.fetchImpl = fetchImpl;
+    this.getHeaders = getHeaders;
     this.attempts = new Map();
   }
   async repair(input) {
@@ -202,7 +203,9 @@ export class HaiRepairAdapter {
     await checkpoint(receipt); // Persist intent before the only provider POST.
     const request = async (path, options = {}) =>
       jsonRequest(new URL(path, this.config.baseUrl), {
-        headers: envHeaders(this.config.headersEnv, this.env),
+        headers: this.getHeaders
+          ? await this.getHeaders(signal)
+          : envHeaders(this.config.headersEnv, this.env),
         fetchImpl: this.fetchImpl,
         signal,
         ...options,

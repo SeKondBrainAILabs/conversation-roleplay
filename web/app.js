@@ -327,6 +327,29 @@ $('campaign-form').addEventListener('submit', async (event) => {
 });
 try {
   meta = await api('/api/meta');
+  const checkServices = async () => {
+    const report = await api('/api/services');
+    $('service-status').textContent = meta.servicesConfigured
+      ? report.ready
+        ? 'SERVICES CONNECTED'
+        : 'SERVICES NEED ATTENTION'
+      : 'LOCAL SIMULATION';
+    $('service-status').title =
+      Object.entries(report.services)
+        .filter(([, value]) => value.configured)
+        .map(
+          ([name, value]) =>
+            `${name}: ${value.ok ? 'connected' : value.error}${name === 'hai' && !value.repairEnabled ? ' · repair disabled' : ''}`,
+        )
+        .join('\n') || 'No shared services configured';
+  };
+  $('service-status').addEventListener('click', () =>
+    checkServices().catch((error) => notice(error.message)),
+  );
+  if (meta.servicesConfigured)
+    checkServices().catch((error) =>
+      notice(`Shared services: ${error.message}`),
+    );
   $('campaign-target').innerHTML = meta.targets
     .map(
       (target) =>

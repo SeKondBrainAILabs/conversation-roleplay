@@ -14,3 +14,9 @@ export {
 } from './repair.mjs';
 export { validateCampaign, validateGeneratedCampaign } from './contracts.mjs';
 export { createLab } from './server.mjs';
+export {
+  CoreAiModel,
+  CoreBackendClient,
+  ServiceCredentials,
+  createServiceStack,
+} from './services.mjs';

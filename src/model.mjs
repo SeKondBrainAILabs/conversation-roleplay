@@ -21,24 +21,15 @@ export class JsonChatModel {
   }
   async complete(purpose, payload, { signal } = {}) {
     assert(prompts[purpose], 'Unknown model purpose');
-    const { data } = await jsonRequest(this.config.url, {
-      method: 'POST',
-      headers: envHeaders(this.config.headersEnv, this.env),
+    const { url, ...transport } = await this.transport(
+      purpose,
+      payload,
+      signal,
+    );
+    const { data } = await jsonRequest(url, {
+      ...transport,
       signal,
       fetchImpl: this.fetchImpl,
-      timeoutMs: this.config.timeoutMs ?? 180000,
-      body: {
-        model: this.config.model,
-        messages: [
-          { role: 'system', content: prompts[purpose] },
-          { role: 'user', content: JSON.stringify(payload) },
-        ],
-        temperature: purpose === 'judge' ? 0 : 0.6,
-        max_tokens: purpose === 'plan' ? 8000 : 2200,
-        ...(this.config.jsonMode
-          ? { response_format: { type: 'json_object' } }
-          : {}),
-      },
     });
     const content = data.choices?.[0]?.message?.content;
     assert(
@@ -55,11 +46,31 @@ export class JsonChatModel {
       );
     } catch {
       throw new Error(
-        'Model did not return valid JSON; no target action was taken for this completion',
+        'Model did not return valid JSON; this completion cannot authorize an action',
       );
     }
     assert(isObject(result), 'Model JSON must be an object');
     return result;
+  }
+  async transport(purpose, payload) {
+    return {
+      url: this.config.url,
+      method: 'POST',
+      headers: envHeaders(this.config.headersEnv, this.env),
+      timeoutMs: this.config.timeoutMs ?? 180000,
+      body: {
+        model: this.config.model,
+        messages: [
+          { role: 'system', content: prompts[purpose] },
+          { role: 'user', content: JSON.stringify(payload) },
+        ],
+        temperature: purpose === 'judge' ? 0 : 0.6,
+        max_tokens: purpose === 'plan' ? 8000 : 2200,
+        ...(this.config.jsonMode
+          ? { response_format: { type: 'json_object' } }
+          : {}),
+      },
+    };
   }
 }
 

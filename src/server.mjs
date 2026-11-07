@@ -6,11 +6,12 @@ import { fileURLToPath } from 'node:url';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { RunStore } from './store.mjs';
 import { CampaignRun } from './engine.mjs';
-import { DemoModel, JsonChatModel } from './model.mjs';
+import { DemoModel } from './model.mjs';
 import { createAdapter } from './adapters.mjs';
-import { DemoRepairAdapter, HaiRepairAdapter } from './repair.mjs';
+import { DemoRepairAdapter } from './repair.mjs';
 import { validateCampaign, validateGeneratedCampaign } from './contracts.mjs';
 import { assert, redact } from './util.mjs';
+import { createServiceStack } from './services.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const example = () =>
@@ -22,8 +23,21 @@ function collectSecrets(config, env) {
   const walk = (value) => {
     if (!value || typeof value !== 'object') return;
     for (const [key, item] of Object.entries(value)) {
-      if (key.endsWith('HeadersEnv') || key === 'headersEnv')
-        for (const name of Object.values(item ?? {})) names.add(name);
+      if (key.endsWith('HeadersEnv') || key === 'headersEnv') {
+        for (const [header, name] of Object.entries(item ?? {}))
+          if (
+            !['x-app-id', 'x-product', 'x-organization-id'].includes(
+              header.toLowerCase(),
+            )
+          )
+            names.add(name);
+      } else if (
+        /^(bearer|serviceKey|appKey|clientSecret|token|password|apiKey)Env$/i.test(
+          key,
+        ) &&
+        typeof item === 'string'
+      )
+        names.add(item);
       else walk(item);
     }
   };
@@ -39,6 +53,7 @@ export function createLab(
   } = {},
 ) {
   const secrets = collectSecrets(config, env);
+  if (env.ROLEPLAY_DEPLOY_TOKEN) secrets.push(env.ROLEPLAY_DEPLOY_TOKEN);
   const store = new RunStore(directory, { secrets });
   const releaseLease = store.acquireLease();
   try {
@@ -48,20 +63,69 @@ export function createLab(
     throw error;
   }
   const runs = new Map();
+  const serviceStack = createServiceStack(config, { env, fetchImpl });
   const targets = {
     demo: { type: 'demo', label: 'Local simulator · no product traffic' },
     ...(config.targets ?? {}),
   };
   const csrf = randomBytes(32).toString('hex');
   let planning = false;
-  const model = (kind) =>
-    new JsonChatModel(config[kind] ?? config.llm, { env, fetchImpl });
+  let launching = 0;
+  let drainUntil =
+    env.ROLEPLAY_START_DRAINED === 'true' ? Date.now() + 300000 : 0;
+  const busy = (message) => {
+    throw Object.assign(new Error(message), { httpStatus: 409 });
+  };
+  const requireAccepting = () => {
+    if (drainUntil > Date.now())
+      busy('Deployment is draining; try after the update completes');
+  };
+  const deploymentState = () => {
+    const all = store.list();
+    const active = all.filter((run) =>
+      ['preparing', 'running', 'paused', 'stopping'].includes(run.status),
+    ).length;
+    const uncertain = all.filter((run) =>
+      run.steps?.some(
+        (step) =>
+          step.status === 'outcome_unknown' ||
+          [
+            'submitting',
+            'submission_unknown',
+            'polling',
+            'poll_interrupted',
+            'poll_unavailable',
+            'poll_limit',
+            'needs_clarification',
+          ].includes(step.repair?.status),
+      ),
+    ).length;
+    return {
+      safeToReplace: !active && !uncertain && !planning && !launching,
+      active,
+      uncertain,
+      planning,
+      launching,
+      draining: drainUntil > Date.now(),
+      revision: env.ROLEPLAY_REVISION ?? null,
+    };
+  };
+  const model = (kind) => serviceStack.model(kind);
   const publicRun = (id) => runs.get(id)?.snapshot() ?? store.read(id);
   const manifest = (target) => {
     assert(targets[target], 'Unknown configured target');
     return createAdapter(targets[target], { env, fetchImpl }).manifest();
   };
   async function launch(campaign) {
+    requireAccepting();
+    launching++;
+    try {
+      return await launchChecked(campaign);
+    } finally {
+      launching--;
+    }
+  }
+  async function launchChecked(campaign) {
     campaign = validateCampaign(campaign);
     assert(targets[campaign.target], 'Unknown configured target');
     assert(
@@ -74,6 +138,7 @@ export function createLab(
     );
     const adapter = createAdapter(targets[campaign.target], { env, fetchImpl });
     const demo = adapter.kind === 'demo';
+    const workspace = demo ? null : await serviceStack.preflight();
     const scopeHashes = adapter.isolationScopes?.(campaign) ?? [];
     for (const prior of store.list()) {
       const uncertain = prior.steps?.some(
@@ -103,11 +168,12 @@ export function createLab(
       judgeModel: demo ? new DemoModel() : model('judgeModel'),
       repairAdapter: demo
         ? new DemoRepairAdapter()
-        : new HaiRepairAdapter(config.hai, { env, fetchImpl }),
+        : serviceStack.repairAdapter,
       store,
       secrets,
     });
     run.state.scopeHashes = scopeHashes;
+    if (workspace) run.state.workspace = workspace;
     run.persist();
     runs.set(run.state.id, run);
     run.completion = run.start();
@@ -134,15 +200,18 @@ export function createLab(
     try {
       const address = server.address();
       const host = `127.0.0.1:${address.port}`;
-      assert(
-        [host, `localhost:${address.port}`].includes(req.headers.host),
-        'Untrusted Host header',
-      );
+      const hosts = [
+        host,
+        `localhost:${address.port}`,
+        `127.0.0.1:${env.ROLEPLAY_PUBLIC_PORT ?? address.port}`,
+        `localhost:${env.ROLEPLAY_PUBLIC_PORT ?? address.port}`,
+      ];
+      assert(hosts.includes(req.headers.host), 'Untrusted Host header');
       if (req.headers.origin)
         assert(
-          [`http://${host}`, `http://localhost:${address.port}`].includes(
-            req.headers.origin,
-          ),
+          hosts
+            .map((hostname) => `http://${hostname}`)
+            .includes(req.headers.origin),
           'Cross-origin request refused',
         );
       res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -151,6 +220,48 @@ export function createLab(
         "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'",
       );
       const url = new URL(req.url, `http://${host}`);
+      if (req.method === 'GET' && url.pathname === '/api/deployment-state')
+        return json(res, 200, deploymentState());
+      if (
+        req.method === 'POST' &&
+        ['/api/deployment/drain', '/api/deployment/resume'].includes(
+          url.pathname,
+        )
+      ) {
+        const expected = Buffer.from(env.ROLEPLAY_DEPLOY_TOKEN ?? '');
+        const supplied = Buffer.from(
+          String(req.headers['x-roleplay-deploy-token'] ?? ''),
+        );
+        assert(
+          expected.length >= 32 &&
+            supplied.length === expected.length &&
+            timingSafeEqual(supplied, expected),
+          'Invalid deployment token',
+        );
+        if (url.pathname.endsWith('/drain')) {
+          if (!deploymentState().safeToReplace)
+            busy('Campaign or uncertain request reserves this deployment');
+          drainUntil = Date.now() + 300000;
+        } else drainUntil = 0;
+        return json(res, 200, deploymentState());
+      }
+      if (req.method === 'GET' && url.pathname === '/healthz')
+        return json(res, 200, {
+          status: 'ok',
+          service: 'conversation-roleplay',
+          revision: env.ROLEPLAY_REVISION ?? null,
+        });
+      if (
+        req.method === 'GET' &&
+        ['/readyz', '/api/services'].includes(url.pathname)
+      ) {
+        const readiness = await serviceStack.check();
+        return json(
+          res,
+          url.pathname === '/readyz' && !readiness.ready ? 503 : 200,
+          readiness,
+        );
+      }
       if (req.method === 'POST') {
         const supplied = Buffer.from(
           String(req.headers['x-roleplay-token'] ?? ''),
@@ -170,24 +281,25 @@ export function createLab(
             type: target.type,
             ...manifest(id),
           })),
-          modelConfigured: Boolean(config.llm ?? config.actorModel),
+          modelConfigured: Boolean(
+            config.services?.coreAi ?? config.llm ?? config.actorModel,
+          ),
+          servicesConfigured: Boolean(config.services),
           example: example(),
         });
       if (req.method === 'GET' && url.pathname === '/api/runs')
         return json(
           res,
           200,
-          store
-            .list()
-            .map((run) => ({
-              id: run.id,
-              name: run.name,
-              target: run.target,
-              status: run.status,
-              demo: run.demo,
-              startedAt: run.startedAt,
-              summary: run.summary,
-            })),
+          store.list().map((run) => ({
+            id: run.id,
+            name: run.name,
+            target: run.target,
+            status: run.status,
+            demo: run.demo,
+            startedAt: run.startedAt,
+            summary: run.summary,
+          })),
         );
       if (req.method === 'POST' && url.pathname === '/api/runs') {
         const run = await launch(await body(req));
@@ -239,6 +351,7 @@ export function createLab(
             ['pause', 'resume', 'stop'].includes(command),
             'Unknown run control',
           );
+          if (command === 'resume') requireAccepting();
           run[command]();
           return json(res, 200, run.snapshot());
         }
@@ -247,6 +360,7 @@ export function createLab(
         req.method === 'POST' &&
         ['/api/plan', '/api/roles/enhance'].includes(url.pathname)
       ) {
+        requireAccepting();
         assert(!planning, 'A planning request is already active');
         const input = await body(req);
         assert(
@@ -337,12 +451,20 @@ export function createLab(
       json(res, 404, { error: 'Not found' });
     } catch (error) {
       if (!res.headersSent)
-        json(res, error.code === 'ENOENT' ? 404 : 400, {
+        json(res, error.httpStatus ?? (error.code === 'ENOENT' ? 404 : 400), {
           error: error.message,
         });
       else res.end();
     }
   });
   server.on('close', releaseLease);
-  return { server, store, runs, launch, publicRun, dispose: releaseLease };
+  return {
+    server,
+    store,
+    runs,
+    launch,
+    publicRun,
+    services: serviceStack,
+    dispose: releaseLease,
+  };
 }

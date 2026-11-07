@@ -6,3 +6,4 @@ config.local.json
 !.env.example
 *.private.json
 test-output/
+image-artifact/

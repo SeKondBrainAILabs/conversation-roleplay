@@ -7,6 +7,8 @@ A reusable, MIT-licensed conversation testing module for PiggyBank, Basanti and 
 
 The local dashboard shows an actor conversation board, scenario dependencies, per-turn evaluation, independent API evidence and HAI proposal status. You can pause, stop, inspect archived runs and export sanitized JSON.
 
+The service deployment uses **Core Backend for canonical workspace identity**, **Core AI Backend for all actor/planner/judge inference**, and **Kora HAI as a remote proposal service**. A standalone Docker container can run on a different machine from the products, exercising the network path a real client uses. The local demo remains available without any of those services.
+
 ![Conversation board showing four fictional actors and a simulated lesson lifecycle](docs/images/conversation-board.png)
 
 ## Run locally
@@ -34,11 +36,40 @@ node src/cli.mjs serve --port 4318 --runs /path/to/private/run-artifacts
 
 ## Connect a real model and target
 
-Copy `config.example.json` to an untracked `config.local.json`. Configure your provider's full chat-completions URL and an available model. The JSON client accepts the standard `messages` / `choices[0].message.content` envelope; use the generic adapter or a custom model implementation for other protocols. `actorModel` and `judgeModel` can override `llm` independently. No default external model, credentials or production endpoint is assumed.
+Copy `config.example.json` to an untracked `config.local.json`, and `.env.example` to a private environment file. Configure service origins, a dedicated OIDC service client, the Core Backend workspace UUID and a separately registered Core AI app. No private endpoint or product credential is bundled.
 
 ```sh
-ROLEPLAY_CONFIG=/absolute/path/config.local.json npm start
+node --env-file=/absolute/private/services.env src/cli.mjs doctor --config config.local.json
+node --env-file=/absolute/private/services.env src/cli.mjs serve --config config.local.json
 ```
+
+### Shared service responsibilities
+
+```mermaid
+flowchart LR
+  Operator[Operator and live conversation board] --> Lab[Roleplay container on a separate client host]
+  Lab -->|OIDC service identity| Core[Core Backend: canonical organization and user]
+  Lab -->|App-bound inference| AI[Core AI Backend: enhance, plan, actor, judge]
+  Lab -->|Authenticated QA actors| Product[PiggyBank, Basanti or HTTP target]
+  Lab -->|Independent GET readback| Product
+  Lab -->|Reviewed product proposal contract| HAI[Kora HAI]
+  Lab --> Evidence[(Private persistent run evidence)]
+```
+
+| Service         | Used for                                                                                           | Contract and authority                                                                                                                                                                               |
+| --------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Core Backend    | Resolve the deployment's canonical workspace and service identity                                  | Authenticated `GET /auth/me`; organization must match the operator configuration. Core remains the identity system of record.                                                                        |
+| Core AI Backend | Role enhancement, scenario planning, adaptive actor turns and separately prompted semantic judging | `POST /v1/chat/completions`, proxy bearer service key, dedicated `X-App-Id` / `X-App-Key`, `X-Product: conversation-roleplay`. `model:auto` sends `model_selection` and verified workspace metadata. |
+| Kora HAI        | Bounded missing-capability proposal requests and polling                                           | `POST /v1/tasks`, then `GET /v1/runs/{run_id}`. Enable repair only for a reviewed product-specific protocol and service identity. A proposal cannot install or qualify itself.                       |
+| Target product  | Conversation, permission enforcement and saved business state                                      | Separate synthetic QA actor credentials and independent observer credentials, never the lab's service account.                                                                                       |
+
+OIDC credentials use canonical `client_credentials`, cache tokens until shortly before expiry, and coalesce simultaneous token refreshes. No locally forged JWTs or production-user sessions are needed. Core Backend may provision the **dedicated service account** on its first authenticated lookup; do not point this setup at an arbitrary human identity. Core AI's app registration must be bound to that canonical workspace by an authorized administrator. Its app key is returned only once and belongs in a private secret file or secret manager.
+
+Register an explicit LLM policy for the new Core AI app through its administrative interface. App credentials alone are insufficient for automatic allocation. `model:auto` also requires enabled allocation, entitled providers and eligible model evidence in the service. Alternatively configure an explicit model supported by that app's reviewed provider policy; inference still goes through Core AI with the same app authentication and usage attribution. Do not bypass app authentication when allocation is unavailable.
+
+`doctor` and `/readyz` verify required service availability, canonical identity and exposed contracts. An HTTP health response does **not** verify paid inference, a product effect or a HAI repair. The example requires all three shared services; a missing or mismatched identity prevents a live campaign before any target message. A disabled HAI repair adapter can still report the shared task service reachable, with `repairEnabled:false` and `repairVerified:false`.
+
+For a different model provider, omit `services` and supply the legacy `llm` object with its full chat-completions `url`, `model`, `headersEnv` and optional `jsonMode`. `actorModel` and `judgeModel` can override `llm` independently; under Core AI, `services.coreAi.actorModel` and `.judgeModel` override model routing settings while retaining canonical identity and app authentication. The JSON client accepts `messages` / `choices[0].message.content`; other envelopes require a custom model implementation. Invalid model JSON never authorizes a product action.
 
 All `headersEnv` values are **environment variable names**, never literal credentials. Environment values remain server-side and are redacted from prompts, transcripts and reports. Observer and fixture credentials can be separate from actor credentials. Do not place credentials in actor context, role descriptions or campaign JSON. Local artifacts can contain fictional QA names and conversation text; they are not intended as a collector of private real-family conversations.
 
@@ -147,11 +178,21 @@ Declare `repairContracts` under a target, then attach a `repairContractId` to an
 }
 ```
 
-The built-in proposal envelope defaults to the inspected `piggybank.api_capability_proposal.v1` provider contract. That is a **product-specific provider contract**, not a universal role protocol. Another product requires its own negotiated protocol/service scope or a custom repair adapter. Service credentials alone do not establish compatibility. HAI feedback/revision, product installation, graph publication and automatic post-install retesting are not implemented in this initial module. This module does not deploy changes to connected products.
+The built-in proposal envelope defaults to the inspected `piggybank.api_capability_proposal.v1` provider contract. That is a **product-specific provider contract**, not a universal role protocol. Another product requires its own negotiated protocol/service scope or a custom repair adapter. Service credentials alone do not establish compatibility. The example leaves repair submission disabled while retaining the remote HAI connection. HAI feedback/revision, product installation, graph publication and automatic post-install retesting are not implemented. This module does not deploy changes to connected products.
+
+Reusable learned skills should be published through HAI's reviewed cognition/registry pipeline with their provenance, compatible API contract and permission boundaries. Family-specific names, records and secrets belong in that family's product context, rather than a globally shared skill. Making a reusable capability available to other families must not grant cross-family data access. This lab records proposal and independent effect evidence that such a promotion pipeline can consume; it does not pretend that graph publication or safe global registry promotion already exists.
+
+## Container deployment and runner
+
+Use **Docker Compose** for the running service. The repository remains importable as a Node module, but a container is the deployable unit: it gives the dashboard, scheduler, private evidence volume and service clients one predictable lifecycle without embedding Core services.
+
+Hosted CI tests Node 22 and 24, builds and smoke-tests native ARM64 and AMD64 images, and produces immutable image artifacts. A trusted pull runner on the client host deploys only the successful exact `main` build. It verifies source/image/archive provenance, waits for campaigns and uncertain requests, drains new starts during cutover, checks readiness and preserves the prior image for rollback. It replaces only the roleplay container; it does not update the target products or shared services.
+
+See the [complete deployment runbook](docs/deployment.md) for Compose, environment configuration, Kora Feet topology, the macOS LaunchAgent, build receipts, readiness, rollback and recovery. Build archives are currently distributed as GitHub Actions artifacts with 30-day retention; there is no npm or registry release to confuse with a verified running deployment.
 
 ## Run evidence and integration boundaries
 
-The dashboard serves only on `127.0.0.1`, checks Host/Origin, requires a per-process request token for mutations, escapes message content, and applies a restrictive content security policy. Use an authenticated deployment wrapper before exposing it to other machines. It has no remote multi-user authentication or tenant administration interface.
+The dashboard binds to `127.0.0.1` locally. In Docker it listens on the container interface, while Compose publishes it only on host loopback. It checks Host/Origin, requires a per-process request token for browser mutations, escapes message content, and applies a restrictive content security policy. Deployment controls use a separate private token. Use an SSH tunnel or authenticated deployment wrapper before exposing it to other machines. It has no remote multi-user authentication or tenant administration interface.
 
 The configured run directory stores private JSON snapshots and an append-only event journal. Only one server/CLI process may own a run directory at a time, so a second launch cannot rewrite the first process's active evidence. On restart, unfinished runs become `interrupted`; in-flight requests become `outcome_unknown`. They remain inspectable. There is deliberately no automatic action replay or unsafe resume. Exports include the campaign, enhanced personas, exact messages, per-turn verdicts, observer evidence and repair receipts, with credentials redacted. A run error, unavailable verifier or exhausted budget is visible rather than converted to success.
 
@@ -159,7 +200,7 @@ This first version is a standalone local package and does not require CognitionO
 
 ## Repository and validation
 
-`src/` contains the engine and adapters, `web/` the dependency-free dashboard, `examples/` a complete lifecycle, and `test/` scheduler, HTTP contract, HAI and server regressions. The project can live in its own repository and be imported by other products through `src/index.mjs`; it does not import either product's source or databases.
+`src/` contains the engine, shared-service clients and adapters; `web/` the dependency-free dashboard; `examples/` a complete lifecycle; `deploy/` the Compose definition and trusted deployment runner; and `test/` scheduler, HTTP contract, service authentication, HAI and deployment regressions. Import the library through `src/index.mjs`; it does not import either product's source or databases.
 
 Validation commands test concurrency/dependency ordering, actor context, blocked outcomes, identity and credential separation, actual request envelopes, no duplicate ambiguous submissions, restart quarantine, judge uncertainty, secret redaction, CSRF and exported evidence. Browser smoke checks cover the board, timeline, inspection, campaign creation, pause/stop and narrow-screen layout. These are module tests, not a claim that a live PiggyBank or Basanti campaign passed.
 
