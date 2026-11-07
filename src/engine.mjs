@@ -283,6 +283,10 @@ export class CampaignRun extends EventEmitter {
       actorId: step.actorId,
     };
   }
+  activity(step, phase) {
+    step.activity = { phase, since: now() };
+    this.record('step.activity', { ...this.ref(step), phase });
+  }
   async execute(step) {
     const ref = this.ref(step);
     step.startedAt = now();
@@ -317,6 +321,7 @@ export class CampaignRun extends EventEmitter {
       if (step.exports && !step.verifierId && !this.state.demo)
         throw new Error('Shared artifacts require an independent verifier');
       if (this.adapter.prepareStep) {
+        this.activity(step, 'checking_identity');
         input.beforeEvidence = await this.adapter.prepareStep(input, {
           signal: this.controller.signal,
         });
@@ -326,12 +331,14 @@ export class CampaignRun extends EventEmitter {
       if (step.kind === 'fixture') {
         await this.waitWhilePaused();
         step.inFlight = true;
+        this.activity(step, 'applying_fixture');
         this.record('fixture.sending', ref);
         step.response = await this.adapter.fixture(input, {
           signal: this.controller.signal,
         });
         step.inFlight = false;
         this.record('fixture.received', ref);
+        this.activity(step, 'verifying');
         step.verification = await this.adapter.verify(input, {
           signal: this.controller.signal,
         });
@@ -347,6 +354,7 @@ export class CampaignRun extends EventEmitter {
         let lastJudgment;
         for (let turn = 0; turn <= step.maxTurns; turn++) {
           await this.waitWhilePaused();
+          this.activity(step, 'composing');
           const action = await this.model(this.actorModel, 'actor', {
             actor,
             step,
@@ -375,6 +383,7 @@ export class CampaignRun extends EventEmitter {
           });
           step.inFlight = true;
           step.pendingMessageId = messageId;
+          this.activity(step, 'waiting_reply');
           this.record('turn.sending', { ...ref, messageId });
           const response = await this.adapter.send(
             {
@@ -400,6 +409,7 @@ export class CampaignRun extends EventEmitter {
             messageId,
           });
           this.record('turn.received', { ...ref, messageId });
+          this.activity(step, 'verifying');
           try {
             step.verification = await this.adapter.verify(input, {
               signal: this.controller.signal,
@@ -412,6 +422,7 @@ export class CampaignRun extends EventEmitter {
                 'Independent observer unavailable; success cannot be established',
             };
           }
+          this.activity(step, 'evaluating');
           lastJudgment = await this.model(this.judgeModel, 'judge', {
             actor,
             goal: step.goal,
@@ -475,6 +486,7 @@ export class CampaignRun extends EventEmitter {
       ) {
         const contract =
           this.adapter.config?.repairContracts?.[step.repairContractId];
+        this.activity(step, 'repairing');
         step.repair = await this.repairAdapter.repair({
           category: step.judgment.category,
           contract,
@@ -503,6 +515,7 @@ export class CampaignRun extends EventEmitter {
       if (!step.inFlight) delete step.pendingMessageId;
     }
     step.finishedAt = now();
+    step.activity = { phase: 'finished', since: step.finishedAt };
     this.record('step.finished', { ...ref, status: step.status });
   }
 }
