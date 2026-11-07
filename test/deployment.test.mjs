@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createLab } from '../src/server.mjs';
 import { example } from '../src/server.mjs';
 import { validateManifest, deploy } from '../deploy/pull-runner.mjs';
+import { archiveIdentity } from '../deploy/image-identity.mjs';
 
 const revision = 'a'.repeat(40);
 const provenance = {
@@ -18,9 +20,10 @@ const provenance = {
 };
 test('deployment rejects wrong commit, run, architecture and corrupted archives', () => {
   const manifest = {
-    version: 1,
+    version: 2,
     ...provenance,
     imageId: `sha256:${'c'.repeat(64)}`,
+    imageConfigDigest: `sha256:${'f'.repeat(64)}`,
   };
   assert.equal(validateManifest(manifest, provenance), manifest);
   for (const change of [
@@ -29,6 +32,7 @@ test('deployment rejects wrong commit, run, architecture and corrupted archives'
     { platform: 'linux/amd64' },
     { archiveSha256: 'e'.repeat(64) },
     { imageId: 'arbitrary-tag' },
+    { imageConfigDigest: 'unverified-config' },
   ])
     assert.throws(() =>
       validateManifest({ ...manifest, ...change }, provenance),
@@ -136,6 +140,7 @@ test('failed post-cutover readiness restores the previous image before releasing
   const directory = mkdtempSync(join(tmpdir(), 'roleplay-rollback-'));
   process.env.ROLEPLAY_TEST_DEPLOY_TOKEN = 'deployment-private-'.repeat(3);
   const imageId = `sha256:${'c'.repeat(64)}`;
+  const runtimeImageId = `sha256:${'9'.repeat(64)}`;
   const previousImage = `sha256:${'d'.repeat(64)}`;
   const archive = Buffer.from('controlled image archive');
   const archiveSha256 = createHash('sha256').update(archive).digest('hex');
@@ -158,9 +163,10 @@ test('failed post-cutover readiness restores the previous image before releasing
             writeFileSync(
               join(output, 'manifest.json'),
               JSON.stringify({
-                version: 1,
+                version: 2,
                 ...provenance,
                 imageId,
+                imageConfigDigest: `sha256:${'f'.repeat(64)}`,
                 archiveSha256,
               }),
             );
@@ -201,7 +207,7 @@ test('failed post-cutover readiness restores the previous image before releasing
         if (args[0] === 'container')
           return JSON.stringify([
             {
-              Image: replaced ? imageId : previousImage,
+              Image: replaced ? runtimeImageId : previousImage,
               Config: { Labels: { 'ai.sekondbrain.roleplay.managed': 'true' } },
               State: { Health: { Status: 'healthy' } },
             },
@@ -209,7 +215,7 @@ test('failed post-cutover readiness restores the previous image before releasing
         if (args[0] === 'image')
           return JSON.stringify([
             {
-              Id: imageId,
+              Id: runtimeImageId,
               Os: 'linux',
               Architecture: 'arm64',
               Config: {
@@ -244,6 +250,7 @@ test('failed post-cutover readiness restores the previous image before releasing
           status: path === '/readyz' ? 503 : 200,
         });
       },
+      inspectArchive: () => ({ configDigest: `sha256:${'f'.repeat(64)}` }),
     },
   );
   await assert.rejects(result, /shared services are not ready/);
@@ -251,4 +258,34 @@ test('failed post-cutover readiness restores the previous image before releasing
   assert.equal(existsSync(join(directory, 'deployment.json')), false);
   assert.equal(existsSync(join(directory, 'runner.lock')), false);
   delete process.env.ROLEPLAY_TEST_DEPLOY_TOKEN;
+});
+
+test('classic and OCI archive layouts preserve the same portable config identity', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'roleplay-image-identity-'));
+  const bytes = JSON.stringify({
+    architecture: 'arm64',
+    os: 'linux',
+    config: { Labels: { 'org.opencontainers.image.revision': revision } },
+    rootfs: { type: 'layers', diff_ids: [`sha256:${'b'.repeat(64)}`] },
+  });
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  const tag = `conversation-roleplay:ci-${revision}`;
+  for (const member of [`${digest}.json`, `blobs/sha256/${digest}`]) {
+    mkdirSync(join(directory, 'blobs/sha256'), { recursive: true });
+    writeFileSync(join(directory, member), bytes);
+    writeFileSync(
+      join(directory, 'manifest.json'),
+      JSON.stringify([{ Config: member, RepoTags: [tag], Layers: [] }]),
+    );
+    const tar = join(directory, 'image.tar');
+    execFileSync('tar', ['-cf', tar, '-C', directory, 'manifest.json', member]);
+    assert.equal(archiveIdentity(tar, tag).configDigest, `sha256:${digest}`);
+    assert.throws(
+      () => archiveIdentity(tar, 'unexpected:tag'),
+      /exactly the expected/,
+    );
+    writeFileSync(join(directory, member), bytes + ' ');
+    execFileSync('tar', ['-cf', tar, '-C', directory, 'manifest.json', member]);
+    assert.throws(() => archiveIdentity(tar, tag), /digest mismatch/);
+  }
 });

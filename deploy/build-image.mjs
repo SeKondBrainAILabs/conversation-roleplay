@@ -5,6 +5,7 @@ import { createReadStream, mkdirSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { get } from 'node:http';
 import { assert, sleep } from '../src/util.mjs';
+import { archiveIdentity } from './image-identity.mjs';
 
 const revision = process.env.GITHUB_SHA;
 const runId = process.env.GITHUB_RUN_ID;
@@ -101,18 +102,20 @@ const output = resolve('image-artifact');
 mkdirSync(output, { recursive: true });
 const archive = join(output, 'image.tar');
 docker('save', '--output', archive, image);
+const { configDigest } = archiveIdentity(archive, image);
 const hash = createHash('sha256');
 for await (const bytes of createReadStream(archive)) hash.update(bytes);
 writeFileSync(
   join(output, 'manifest.json'),
   JSON.stringify(
     {
-      version: 1,
+      version: 2,
       repository: process.env.GITHUB_REPOSITORY,
       revision,
       runId,
       platform,
       imageId,
+      imageConfigDigest: configDigest,
       archiveSha256: hash.digest('hex'),
     },
     null,

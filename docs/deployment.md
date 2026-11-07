@@ -29,12 +29,12 @@ Compose starts with a five-minute drain lease so a deployment can verify readine
 
 ## Hosted builds, host-side pull deployment
 
-The workflow runs the full test suite on Node 22 and 24, then builds native `linux/arm64` and `linux/amd64` images on hosted runners. Each build starts its image with the same filesystem/capability restrictions, checks health and source revision, and uploads a Docker archive with a manifest containing the commit, workflow run, platform, image ID and archive SHA-256. Artifacts are retained for 30 days. This does not publish an npm package or require a public registry account.
+The workflow runs the full test suite on Node 22 and 24, then builds native `linux/arm64` and `linux/amd64` images on hosted runners. Each build starts its image with the same filesystem/capability restrictions, checks health and source revision, and uploads a Docker archive with a manifest containing the commit, workflow run, platform, build image ID, portable configuration digest and archive SHA-256. Artifacts are retained for 30 days. This does not publish an npm package or require a public registry account.
 
 The host-side runner is installed from a trusted reviewed checkout, separate from the container. It:
 
 1. Reads the current remote `main` commit and looks for its successful, first-attempt **push** run of `.github/workflows/test.yml`. Pull-request runs and incomplete or unsuccessful builds are ineligible.
-2. Downloads that run's one matching architecture artifact. Verifies its commit, run, platform and archive checksum; loads the image and independently checks its image ID and OCI source/revision labels.
+2. Downloads that run's one matching architecture artifact. Verifies its commit, run, platform, archive checksum and single expected image tag; loads the image and independently checks its platform and OCI source/revision labels. It exports the imported image again and checks that the portable configuration digest, including its root filesystem layer identities, still matches the build. This works across classic Docker and containerd stores, which may report different engine-specific image IDs for the same configuration.
 3. Rechecks that `main` has not advanced. Checks the current container's ownership and campaign reservations. Active/paused campaigns, in-flight planning, unknown product outcomes and unresolved HAI requests defer deployment. It never cancels a campaign.
 4. Authenticates a drain request, which atomically refuses new campaigns. Replaces only the owned Compose service, keeping the evidence volume. The new process also starts drained.
 5. Checks Docker health, exact running image, source revision and required service readiness. Saves a private deployment receipt and releases the drain. If replacement fails, restores the prior image using the same volume before releasing the drain.
@@ -63,7 +63,7 @@ The LaunchAgent checks every five minutes and writes private logs under the conf
 - `/readyz`: required service readiness, returning HTTP 503 when unavailable. Identity and OpenAPI checks do not claim that inference, a product action or a HAI repair succeeded.
 - `/api/services`: the same bounded diagnostic report, suitable for the dashboard. No credentials are included.
 - `/api/deployment-state`: counts of active and uncertain reservations; no transcripts or tokens.
-- `deployment.json`: exact source/image/artifact/run receipt and service readiness at cutover.
+- `deployment.json`: exact source/artifact/run receipt, build image ID, host image ID, portable configuration digest and service readiness at cutover.
 
 Inspect `docker compose -f deploy/compose.yml logs --tail 100` and the private runner logs when diagnosing a failure. A stale runner lock requires checking that no deploy process is alive before deleting that one lock. The run-directory lease also fails closed when it cannot establish ownership; after an ungraceful container crash, inspect the prior container and preserve evidence before clearing a stale lease. Never run two containers against the same run volume. A restart quarantines unfinished actions and does not replay them. Resolve unknown outcomes by independent target readback before deciding whether a fresh isolated campaign is appropriate.
 

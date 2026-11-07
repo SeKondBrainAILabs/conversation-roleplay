@@ -17,13 +17,14 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assert } from '../src/util.mjs';
+import { archiveIdentity } from './image-identity.mjs';
 
 export function validateManifest(
   manifest,
   { repository, revision, runId, platform, archiveSha256 },
 ) {
   assert(
-    manifest.version === 1 &&
+    manifest.version === 2 &&
       manifest.repository === repository &&
       manifest.revision === revision &&
       String(manifest.runId) === String(runId) &&
@@ -32,6 +33,7 @@ export function validateManifest(
   );
   assert(
     /^sha256:[a-f0-9]{64}$/.test(manifest.imageId) &&
+      /^sha256:[a-f0-9]{64}$/.test(manifest.imageConfigDigest) &&
       /^[a-f0-9]{64}$/.test(manifest.archiveSha256) &&
       manifest.archiveSha256 === archiveSha256,
     'Artifact checksum/image identity mismatch',
@@ -49,6 +51,7 @@ export async function deploy(
         ...options,
       }).trim(),
     fetchImpl = fetch,
+    inspectArchive = archiveIdentity,
   } = {},
 ) {
   const {
@@ -230,16 +233,28 @@ export async function deploy(
         archiveSha256: hash.digest('hex'),
       },
     );
-    docker('load', '--input', join(temp, 'image.tar'));
-    const loaded = JSON.parse(docker('image', 'inspect', manifest.imageId))[0];
+    const imageTag = `conversation-roleplay:ci-${revision}`;
+    const archive = inspectArchive(join(temp, 'image.tar'), imageTag);
     assert(
-      loaded.Id === manifest.imageId &&
-        `${loaded.Os}/${loaded.Architecture}` === platform &&
+      archive.configDigest === manifest.imageConfigDigest,
+      'Build image configuration digest mismatch',
+    );
+    docker('load', '--input', join(temp, 'image.tar'));
+    const loaded = JSON.parse(docker('image', 'inspect', imageTag))[0];
+    assert(
+      `${loaded.Os}/${loaded.Architecture}` === platform &&
         loaded.Config.Labels?.['org.opencontainers.image.revision'] ===
           revision &&
         loaded.Config.Labels?.['org.opencontainers.image.source'] ===
           `https://github.com/${repository}`,
       'Loaded image provenance mismatch',
+    );
+    const importedArchive = join(temp, 'imported.tar');
+    docker('save', '--output', importedArchive, imageTag);
+    assert(
+      inspectArchive(importedArchive, imageTag).configDigest ===
+        manifest.imageConfigDigest,
+      'Imported image configuration differs from the tested build',
     );
     assert(
       api('git/ref/heads/main').object.sha === revision,
@@ -250,7 +265,7 @@ export async function deploy(
       drained = true;
     }
     const image = `conversation-roleplay:verified-${revision}`;
-    docker('tag', manifest.imageId, image);
+    docker('tag', loaded.Id, image);
     try {
       drained = true;
       compose(
@@ -276,7 +291,7 @@ export async function deploy(
         docker('container', 'inspect', 'conversation-roleplay'),
       )[0];
       assert(
-        running.Image === manifest.imageId,
+        running.Image === loaded.Id,
         'Running image differs from verified build',
       );
       const readinessResponse = await fetchImpl(`${base}/readyz`, {
@@ -296,7 +311,9 @@ export async function deploy(
         runId: run.id,
         artifactId: artifacts[0].id,
         platform,
-        imageId: manifest.imageId,
+        imageId: loaded.Id,
+        buildImageId: manifest.imageId,
+        imageConfigDigest: manifest.imageConfigDigest,
         archiveSha256: manifest.archiveSha256,
         previousImageId: previous?.Image ?? null,
         readiness,
