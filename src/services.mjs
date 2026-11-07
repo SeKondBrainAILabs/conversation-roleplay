@@ -1,6 +1,7 @@
 /** Shared platform services. Core Backend owns identity; Core AI owns inference; HAI owns repair proposals. */
 import { JsonChatModel } from './model.mjs';
 import { HaiRepairAdapter } from './repair.mjs';
+import { KoraOneIncidentClient } from './incidents.mjs';
 import { assert, envHeaders, jsonRequest, uuid } from './util.mjs';
 
 export function setting(config, key, env = process.env, fallback) {
@@ -232,8 +233,30 @@ export function createServiceStack(config = {}, options = {}) {
         }
       : {}),
   });
+  const koraOne = services.koraOne;
+  const incidentCredentials = koraOne?.auth
+    ? new ServiceCredentials(koraOne.auth, options)
+    : null;
+  const incidentClient = new KoraOneIncidentClient(
+    koraOne
+      ? {
+          ...koraOne,
+          baseUrl: koraOne.baseUrlEnv
+            ? env[koraOne.baseUrlEnv]
+            : koraOne.baseUrl,
+        }
+      : undefined,
+    coreBackend,
+    {
+      ...options,
+      ...(incidentCredentials
+        ? { getHeaders: (signal) => incidentCredentials.headers(signal) }
+        : {}),
+    },
+  );
   return {
     coreBackend,
+    incidentClient,
     model(kind) {
       if (services.coreAi)
         return new CoreAiModel(
@@ -273,6 +296,9 @@ export function createServiceStack(config = {}, options = {}) {
         }
       };
       await Promise.all([
+        koraOne?.enabled
+          ? run('koraOne', () => incidentClient.check())
+          : Promise.resolve(),
         services.coreBackend
           ? run('coreBackend', async () => ({
               identityVerified: true,
@@ -338,7 +364,9 @@ export function createServiceStack(config = {}, options = {}) {
         services.required ?? (services.coreAi ? ['coreBackend', 'coreAi'] : []);
       return {
         mode: required.length ? 'services' : 'demo-or-custom',
-        ready: required.every((name) => report[name]?.ok),
+        ready:
+          required.every((name) => report[name]?.ok) &&
+          (!koraOne?.enabled || report.koraOne?.ok === true),
         services: report,
       };
     },

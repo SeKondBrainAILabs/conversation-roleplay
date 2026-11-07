@@ -88,6 +88,7 @@ export class HttpConversationAdapter {
       verifiers: describe(this.config.verifiers),
       fixtures: describe(this.config.fixtures),
       repairs: describe(this.config.repairContracts),
+      incidents: describe(this.config.incidentContracts),
     };
   }
   isolationScopes(campaign) {

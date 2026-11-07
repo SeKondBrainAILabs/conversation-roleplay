@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { preflightCampaignRepairs } from './clarifications.mjs';
 import { validateCampaign } from './contracts.mjs';
 import { instructionResults } from './instructions.mjs';
+import { incidentEligible, preflightIncidentContracts } from './incidents.mjs';
 import { assert, at, clone, now, redact, sleep, uuid } from './util.mjs';
 
 const good = new Set(['passed', 'simulated']);
@@ -24,6 +25,7 @@ export class CampaignRun extends EventEmitter {
       actorModel,
       judgeModel = actorModel,
       repairAdapter,
+      incidentClient,
       store,
       secrets = [],
     },
@@ -34,6 +36,8 @@ export class CampaignRun extends EventEmitter {
     this.actorModel = actorModel;
     this.judgeModel = judgeModel;
     this.repairAdapter = repairAdapter;
+    this.incidentClient = incidentClient;
+    preflightIncidentContracts(this.campaign, adapter, incidentClient);
     const repairCheck = preflightCampaignRepairs(
       this.campaign,
       adapter.config?.repairContracts,
@@ -562,6 +566,7 @@ export class CampaignRun extends EventEmitter {
       if (
         step.status === 'failed' &&
         step.repairContractId &&
+        !step.incidentContractId &&
         this.repairAdapter
       ) {
         const contract =
@@ -600,6 +605,42 @@ export class CampaignRun extends EventEmitter {
       if (evaluatorError) step.errorSource = 'evaluator';
       step.error = error.message;
       if (!step.inFlight) delete step.pendingMessageId;
+    }
+    if (
+      step.incidentContractId &&
+      this.incidentClient &&
+      incidentEligible(step)
+    ) {
+      try {
+        const contract =
+          this.adapter.config.incidentContracts[step.incidentContractId];
+        this.activity(step, 'reporting_incident');
+        step.incident = await this.incidentClient.report({
+          contract,
+          step,
+          product: this.campaign.target,
+          platformRole: this.adapter.binding(step.worldId, step.actorId).context
+            .role,
+          runId: this.state.id,
+          scenarioId: step.scenarioId,
+          signal: this.controller.signal,
+          checkpoint: async (receipt) => {
+            step.incident = clone(receipt);
+            this.record('incident.checkpoint', ref);
+          },
+        });
+      } catch {
+        step.incident = {
+          ...step.incident,
+          status:
+            step.incident?.status === 'submitting'
+              ? 'submission_unknown'
+              : 'unavailable',
+          effectVerified: false,
+          reason:
+            'Inspect the saved incident receipt; the original product result is unchanged and no action is replayed.',
+        };
+      }
     }
     step.finishedAt = now();
     step.activity = { phase: 'finished', since: step.finishedAt };

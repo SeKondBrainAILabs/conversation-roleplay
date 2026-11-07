@@ -264,6 +264,11 @@ test('restart quarantines in-flight requests and preserves accepted HAI IDs', ()
         inFlight: true,
         pendingMessageId: 'original',
         repair: { status: 'polling', providerRunId: 'provider-1', attempts: 1 },
+        incident: {
+          status: 'submitting',
+          fingerprint: 'incident-1',
+          attempts: 1,
+        },
       },
     ],
   });
@@ -273,6 +278,8 @@ test('restart quarantines in-flight requests and preserves accepted HAI IDs', ()
   assert.equal(result.steps[0].status, 'outcome_unknown');
   assert.equal(result.steps[0].repair.providerRunId, 'provider-1');
   assert.equal(result.steps[0].repair.status, 'poll_interrupted');
+  assert.equal(result.steps[0].incident.status, 'submission_unknown');
+  assert.equal(result.steps[0].incident.fingerprint, 'incident-1');
 });
 
 test('insufficient goal completion and observer unavailability are unverified', async () => {

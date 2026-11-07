@@ -182,6 +182,15 @@ export function validateCampaign(input) {
           identifier(step.repairContractId),
         'Invalid repair contract ID',
       );
+      assert(
+        step.incidentContractId === undefined ||
+          identifier(step.incidentContractId),
+        'Invalid incident contract ID',
+      );
+      assert(
+        !step.incidentContractId || !step.repairContractId,
+        'Choose Kora One incidents or a direct proposal, never two repair queues for one failure',
+      );
       if (step.kind === 'fixture')
         assert(
           identifier(step.fixtureId),
@@ -241,6 +250,7 @@ export function validateGeneratedCampaign(
     verifierIds = [],
     fixtureIds = [],
     repairContractIds = [],
+    incidentContractIds = [],
     worlds,
   },
 ) {
@@ -277,6 +287,11 @@ export function validateGeneratedCampaign(
         !step.repairContractId ||
           repairContractIds.includes(step.repairContractId),
         'Planner invented a repair contract',
+      );
+      assert(
+        !step.incidentContractId ||
+          incidentContractIds.includes(step.incidentContractId),
+        'Planner invented an incident contract',
       );
     }
   return valid;
