@@ -389,12 +389,25 @@ export class CampaignRun extends EventEmitter {
           this.activity(step, 'composing');
           const action = await this.model(this.actorModel, 'actor', {
             actor,
-            step,
+            step: {
+              id: step.id,
+              goal: step.goal,
+              effect: step.effect,
+              maxTurns: step.maxTurns,
+              instructions: clone(step.instructions),
+            },
             sharedFacts: input.shared,
             conversationHistory: history,
-            transcript: step.transcript,
-            latestVerification: step.verification,
-            instructionResults: step.instructionResults,
+            transcript: step.transcript.map(({ role, text }) => ({
+              role,
+              text,
+            })),
+            latestVerification: step.verification
+              ? { status: step.verification.status }
+              : undefined,
+            instructionResults: step.instructionResults?.map(
+              ({ id, status, apiStatus }) => ({ id, status, apiStatus }),
+            ),
           });
           assert(
             typeof action.message === 'string' &&

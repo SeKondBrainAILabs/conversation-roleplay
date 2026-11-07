@@ -404,3 +404,56 @@ test('an uncertain product request blocks a planned read-only follow-up rather t
   assert.equal(result.steps[1].status, 'blocked');
   assert.equal(result.qualified, false);
 });
+
+test('privileged observer records are not exposed to the acting person as private knowledge', async () => {
+  const value = campaign({
+    id: 'read',
+    actorId: 'parent',
+    goal: 'Read tasks',
+    effect: 'read',
+    maxTurns: 2,
+  });
+  const actorPayloads = [];
+  let asks = 0;
+  let judged = 0;
+  const run = new CampaignRun(value, {
+    actorModel: {
+      kind: 'llm',
+      complete: async (purpose, payload) => {
+        if (purpose === 'enhance')
+          return { roles: value.roles.map((r) => ({ ...r, persona: {} })) };
+        actorPayloads.push(payload);
+        return {
+          message: asks++ ? 'Please clarify my own task.' : 'Show my tasks.',
+          done: asks > 2,
+        };
+      },
+    },
+    judgeModel: {
+      kind: 'llm',
+      complete: async () => ({
+        verdict: judged++ ? 'pass' : 'uncertain',
+        goalComplete: true,
+        category: 'none',
+        reason: 'Review with private independent facts only',
+      }),
+    },
+    adapter: {
+      kind: 'http',
+      config: {},
+      send: async () => ({ text: 'Please ask which task.', status: 200 }),
+      verify: async () => ({
+        status: 'passed',
+        checks: [],
+        evidence: { privateSiblingBalance: 'observer-only-sensitive-value' },
+      }),
+    },
+  });
+  await run.start();
+  assert.ok(actorPayloads.length >= 2);
+  assert.equal(actorPayloads[1].latestVerification.status, 'passed');
+  assert.ok(
+    !JSON.stringify(actorPayloads).includes('observer-only-sensitive-value'),
+  );
+  assert.ok(!JSON.stringify(actorPayloads).includes('privateSiblingBalance'));
+});
