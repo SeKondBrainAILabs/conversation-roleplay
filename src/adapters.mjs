@@ -61,6 +61,14 @@ export class HttpConversationAdapter {
         description: hook.description ?? id,
       }));
     return {
+      worlds: Object.entries(this.config.bindings ?? {}).map(
+        ([id, actors]) => ({
+          id,
+          actorIds: Object.entries(actors)
+            .filter(([, actor]) => actor.qa === true)
+            .map(([id]) => id),
+        }),
+      ),
       verifiers: describe(this.config.verifiers),
       fixtures: describe(this.config.fixtures),
       repairs: describe(this.config.repairContracts),

@@ -175,7 +175,14 @@ export function validateCampaign(input) {
 /** Model planning may only use roles and operation hooks supplied by the operator. */
 export function validateGeneratedCampaign(
   campaign,
-  { target, roles, verifierIds = [], fixtureIds = [], repairContractIds = [] },
+  {
+    target,
+    roles,
+    verifierIds = [],
+    fixtureIds = [],
+    repairContractIds = [],
+    worlds,
+  },
 ) {
   assert(
     campaign.repairAnswers === undefined,
@@ -189,6 +196,15 @@ export function validateGeneratedCampaign(
   const valid = validateCampaign(campaign);
   for (const scenario of valid.scenarios)
     for (const step of scenario.steps) {
+      if (worlds)
+        assert(
+          worlds.some(
+            (world) =>
+              world.id === scenario.worldId &&
+              world.actorIds.includes(step.actorId),
+          ),
+          'Planner invented a QA world or used an unbound actor',
+        );
       assert(
         !step.verifierId || verifierIds.includes(step.verifierId),
         'Planner invented a verifier',

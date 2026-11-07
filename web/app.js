@@ -26,6 +26,7 @@ let lastUpdate;
 const activeRun = (run) =>
   ['preparing', 'running', 'paused', 'stopping'].includes(run.status);
 const personaDrafts = new Map();
+let designerInitialized = false;
 async function api(path, body) {
   const result = await fetch(
     path,
@@ -233,6 +234,16 @@ function renderDetail(index) {
     `<div class="detail-meta">${status(step.status)}<span>${escape(current.roles.find((role) => role.id === step.actorId).name)}</span><span>World ${escape(step.worldId)}</span></div><p class="muted">${escape(step.goal)}</p>${step.error ? `<pre>${escape(step.error)}</pre>` : ''}${activity(step)}<section class="detail-section"><h3>Conversation</h3>${step.transcript.length ? step.transcript.map((turn) => `${bubble(turn)}${turn.judgment ? `<div class="detail-verdict">${escape(title(turn.judgment.verdict))} · ${escape(turn.judgment.reason)}</div>` : ''}`).join('') : '<p class="muted">No conversation messages. Fixture and blocked steps are recorded separately.</p>'}</section><section class="detail-section"><h3>Independent API verification</h3><ul class="check-list">${(step.verification?.checks ?? []).map((rule) => `<li><span class="${rule.passed ? 'check-pass' : 'check-fail'}">${rule.passed ? '✓' : '×'}</span>${escape(rule.label)}</li>`).join('') || '<li>No independent verification receipt yet.</li>'}</ul><details><summary>Observer evidence and shared artifacts</summary><pre>${escape(pretty({ verification: step.verification, sharedArtifacts: step.artifacts, conversationId: step.conversationId, pendingMessageId: step.pendingMessageId }))}</pre></details></section><section class="detail-section"><h3>HAI repair</h3>${step.repair ? `<p class="muted">${escape(step.repair.reason)}</p><pre>${escape(pretty(step.repair))}</pre>` : '<p class="muted">No repair requested. Correct permission denials are not capability gaps.</p>'}</section>`;
 }
 function openDesigner() {
+  if (!designerInitialized) {
+    const draft = current && !current.demo ? current.campaign : meta.example;
+    $('campaign-target').value = draft.target;
+    $('campaign-name').value = `${draft.name} · follow-up`;
+    $('campaign-roles').value = draft.roles
+      .map((role) => `${role.id} | ${role.name} | ${role.description}`)
+      .join('\n');
+    $('campaign-json').value = pretty(draft);
+    designerInitialized = true;
+  }
   clearHaiInputs();
   $('form-error').textContent = '';
   $('campaign-dialog').showModal();
