@@ -427,3 +427,71 @@ test('demo lifecycle is parallel and visibly simulated, with a seeded failed/blo
     /practise longer words/,
   );
 });
+
+test('progress snapshots expose pending product reply before any invented assistant turn and then verification and judging', async () => {
+  const deferred = () => {
+    let resolve;
+    const promise = new Promise((done) => (resolve = done));
+    return { promise, resolve };
+  };
+  const product = deferred();
+  const observer = deferred();
+  const evaluator = deferred();
+  const sent = deferred();
+  const verifying = deferred();
+  const judging = deferred();
+  const actorModel = new TestModel();
+  const run = runner(
+    campaign([
+      scenario('progress', [step('ask', 'parent', { verifierId: 'receipt' })]),
+    ]),
+    {
+      adapter: adapter({
+        send: async () => {
+          sent.resolve();
+          return product.promise;
+        },
+        verify: async () => {
+          verifying.resolve();
+          return observer.promise;
+        },
+      }),
+      actorModel,
+      judgeModel: {
+        complete: async () => {
+          judging.resolve();
+          return evaluator.promise;
+        },
+      },
+    },
+  );
+  const completion = run.start();
+  await sent.promise;
+  const pending = run.snapshot().steps[0];
+  assert.equal(pending.activity.phase, 'waiting_reply');
+  assert.equal(pending.inFlight, true);
+  assert.equal(pending.transcript.length, 1);
+  assert.equal(pending.transcript[0].role, 'user');
+  assert.ok(pending.pendingMessageId);
+  product.resolve({ text: 'Actual delayed reply', status: 200 });
+  await verifying.promise;
+  assert.equal(run.snapshot().steps[0].activity.phase, 'verifying');
+  assert.equal(
+    run.snapshot().steps[0].transcript[1].text,
+    'Actual delayed reply',
+  );
+  observer.resolve({ status: 'passed', checks: [], evidence: {} });
+  await judging.promise;
+  assert.equal(run.snapshot().steps[0].activity.phase, 'evaluating');
+  evaluator.resolve({
+    verdict: 'pass',
+    goalComplete: true,
+    category: 'none',
+    reason: 'Checked',
+    evidence: [],
+  });
+  const result = await completion;
+  assert.equal(result.status, 'completed');
+  assert.equal(result.steps[0].activity.phase, 'finished');
+  assert.ok(result.events.some((event) => event.phase === 'composing'));
+});

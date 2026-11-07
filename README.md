@@ -11,6 +11,14 @@ The service deployment uses **Core Backend for canonical workspace identity**, *
 
 ![Conversation board showing four fictional actors and a simulated lesson lifecycle](docs/images/conversation-board.png)
 
+## Watch actual conversations
+
+The dashboard opens the active live campaign automatically and discovers newly started live runs every five seconds. It never starts a campaign by opening a page. Simulation runs are labelled separately and are only started explicitly under the developer example.
+
+Each role has a lane showing timestamped actor messages and actual product replies. A running step reports whether the actor is composing, the product reply is pending, independent API state is being read, the judge is evaluating, or HAI is working. Waiting time and the last event make stalled requests visible. Select a step for the full transcript, saved conversation/message IDs, observer checks and repair receipts; the timeline shows prerequisites and blocked handoffs. Copy the URL with `?run=RUN_ID` to reopen the exact saved run. A bookmarked or manually selected run stays selected when another campaign starts.
+
+Live campaigns need configured QA identities, service credentials and reviewed GET-only observers. The module does not manufacture replies or mark an assistant's success claim as verified. Actor/judge calls go through the configured model service; target calls go through the actual product adapter. This web-chat transport does not substitute for WhatsApp or voice qualification.
+
 ## Run locally
 
 Requires Node.js 22 or later. No package installation, product dependency or external service is needed for the demo.

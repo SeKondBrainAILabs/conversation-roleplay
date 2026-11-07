@@ -21,6 +21,10 @@ let meta,
   source,
   view = 'board',
   selectedStep;
+let followLatest = !new URL(location.href).searchParams.has('run');
+let lastUpdate;
+const activeRun = (run) =>
+  ['preparing', 'running', 'paused', 'stopping'].includes(run.status);
 const personaDrafts = new Map();
 async function api(path, body) {
   const result = await fetch(
@@ -53,25 +57,39 @@ function showView(next) {
   $('nav-live').classList.toggle('selected', view === 'board');
   $('nav-timeline').classList.toggle('selected', view === 'timeline');
 }
-async function refreshRuns() {
+async function refreshRuns({ discover = false } = {}) {
   const runs = await api('/api/runs');
   $('run-list').innerHTML = runs.length
     ? runs
         .map(
           (run) =>
-            `<button class="run-item ${run.id === current?.id ? 'active' : ''}" data-run="${escape(run.id)}"><strong>${escape(run.name)}</strong><small><span>${escape(run.target)}</span><span>${escape(title(run.status))}</span></small></button>`,
+            `<button class="run-item ${run.id === current?.id ? 'active' : ''}" data-run="${escape(run.id)}"><strong>${escape(run.name)}</strong><small><span>${escape(run.target)} · ${run.demo ? 'simulation' : 'live product'}</span><span>${escape(title(run.status))}</span></small></button>`,
         )
         .join('')
     : '<p class="muted">Your campaigns will appear here.</p>';
+  if (discover && followLatest && !activeRun(current ?? {})) {
+    const live = runs.filter((run) => !run.demo);
+    const next = live.find(activeRun) ?? live[0];
+    if (next && next.id !== current?.id)
+      attach(await api(`/api/runs/${next.id}`));
+  }
+  return runs;
 }
 function attach(run) {
   source?.close();
   current = run;
+  selectedStep = undefined;
+  if ($('detail-dialog').open) $('detail-dialog').close();
+  const url = new URL(location.href);
+  url.searchParams.set('run', run.id);
+  history.replaceState(null, '', url);
+  lastUpdate = Date.now();
   render();
   refreshRuns();
   source = new EventSource(`/api/runs/${run.id}/events`);
   source.onmessage = (event) => {
     current = JSON.parse(event.data);
+    lastUpdate = Date.now();
     render();
     if (
       !['preparing', 'running', 'paused', 'stopping'].includes(current.status)
@@ -84,11 +102,36 @@ function attach(run) {
     $('connection').textContent = 'Reconnecting…';
   };
   source.onopen = () => {
-    $('connection').textContent = 'Connected to local server';
+    $('connection').textContent = 'Live event stream connected';
   };
 }
 function bubble(turn) {
-  return `<div class="bubble ${escape(turn.role)}"><span class="bubble-label">${turn.role === 'user' ? 'ACTOR' : 'SYSTEM'}</span>${escape(turn.text)}</div>`;
+  return `<div class="bubble ${escape(turn.role)}"><span class="bubble-label">${turn.role === 'user' ? 'ACTOR' : 'PRODUCT REPLY'}${turn.at ? ` · ${escape(new Date(turn.at).toLocaleTimeString())}` : ''}</span>${escape(turn.text)}</div>`;
+}
+function activity(step) {
+  if (step.status !== 'running') return '';
+  const labels = {
+    checking_identity: 'Checking QA identity and initial API state',
+    composing: 'Actor is composing the next message',
+    waiting_reply: 'Message sent · waiting for the product reply',
+    verifying: 'Reading independent API evidence',
+    evaluating: 'Judge is evaluating the reply and API evidence',
+    applying_fixture: 'Applying the reviewed QA fixture',
+    repairing: 'Waiting for HAI repair evidence',
+  };
+  return `<div class="step-activity" role="status">${escape(labels[step.activity?.phase] ?? (step.inFlight ? labels.waiting_reply : 'Preparing conversation'))}<small data-since="${escape(step.activity?.since ?? step.startedAt)}"></small></div>`;
+}
+function updateElapsed() {
+  document.querySelectorAll('[data-since]').forEach((item) => {
+    const elapsed = Math.max(
+      0,
+      Math.floor((Date.now() - Date.parse(item.dataset.since)) / 1000),
+    );
+    item.textContent = Number.isFinite(elapsed) ? `Waiting ${elapsed}s` : '';
+  });
+  if (lastUpdate && current && activeRun(current))
+    $('live-state').textContent =
+      `Live · last event ${Math.max(0, Math.floor((Date.now() - lastUpdate) / 1000))}s ago`;
 }
 function render() {
   if (!current) return;
@@ -143,7 +186,7 @@ function render() {
         steps
           .map((step) => {
             const index = current.steps.indexOf(step);
-            return `<article class="step-card" tabindex="0" role="button" data-step="${index}" aria-label="Inspect ${escape(title(step.id))}"><div class="step-card-top"><div><strong>${escape(title(step.id))}</strong><small>${escape(step.scenarioTitle)}</small></div>${status(step.status)}</div>${!step.transcript.length ? `<div class="step-goal">${escape(step.goal)}</div>` : step.transcript.slice(-4).map(bubble).join('')}${step.status === 'pending' ? `<div class="waiting-copy">↳ ${step.dependsOn.length ? `Waiting for ${escape(step.dependsOn.map(title).join(', '))}` : 'Ready when a lane is available'}</div>` : ''}${step.repair ? `<div class="repair-tag">✧ HAI · ${escape(title(step.repair.status))} · ${step.repair.effectVerified ? 'effect verified' : 'not a verified fix'}</div>` : ''}<div class="card-footer ${['failed', 'unverified', 'outcome_unknown'].includes(step.status) ? 'issue' : ''}"><span>${escape(step.error ?? step.judgment?.reason ?? (step.kind === 'fixture' ? 'QA fixture event' : 'No messages yet'))}</span><span>↗</span></div></article>`;
+            return `<article class="step-card" tabindex="0" role="button" data-step="${index}" aria-label="Inspect ${escape(title(step.id))}"><div class="step-card-top"><div><strong>${escape(title(step.id))}</strong><small>${escape(step.scenarioTitle)}</small></div>${status(step.status)}</div>${!step.transcript.length ? `<div class="step-goal">${escape(step.goal)}</div>` : step.transcript.slice(-4).map(bubble).join('')}${activity(step)}${step.status === 'pending' ? `<div class="waiting-copy">↳ ${step.dependsOn.length ? `Waiting for ${escape(step.dependsOn.map(title).join(', '))}` : 'Ready when a lane is available'}</div>` : ''}${step.repair ? `<div class="repair-tag">✧ HAI · ${escape(title(step.repair.status))} · ${step.repair.effectVerified ? 'effect verified' : 'not a verified fix'}</div>` : ''}<div class="card-footer ${['failed', 'unverified', 'outcome_unknown'].includes(step.status) ? 'issue' : ''}"><span>${escape(step.error ?? step.judgment?.reason ?? (step.kind === 'fixture' ? 'QA fixture event' : 'No messages yet'))}</span><span>↗</span></div></article>`;
           })
           .join('') || '<p class="waiting-copy">No steps assigned yet.</p>'
       }</div></section>`;
@@ -168,6 +211,7 @@ function render() {
         `<div class="event"><time>${escape(new Date(event.at).toLocaleTimeString())}</time><b>${escape(event.type)}</b><span>${escape([event.scenarioId, event.stepId, event.actorId].filter(Boolean).join(' / '))}</span>${event.status || event.verdict ? status(event.status ?? event.verdict) : ''}</div>`,
     )
     .join('');
+  updateElapsed();
   if ($('detail-dialog').open && selectedStep !== undefined)
     renderDetail(selectedStep);
 }
@@ -177,7 +221,7 @@ function renderDetail(index) {
   $('detail-title').textContent = title(step.id);
   $('detail-label').textContent = step.scenarioTitle;
   $('detail-body').innerHTML =
-    `<div class="detail-meta">${status(step.status)}<span>${escape(current.roles.find((role) => role.id === step.actorId).name)}</span><span>World ${escape(step.worldId)}</span></div><p class="muted">${escape(step.goal)}</p>${step.error ? `<pre>${escape(step.error)}</pre>` : ''}<section class="detail-section"><h3>Conversation</h3>${step.transcript.length ? step.transcript.map((turn) => `${bubble(turn)}${turn.judgment ? `<div class="detail-verdict">${escape(title(turn.judgment.verdict))} · ${escape(turn.judgment.reason)}</div>` : ''}`).join('') : '<p class="muted">No conversation messages. Fixture and blocked steps are recorded separately.</p>'}</section><section class="detail-section"><h3>Independent API verification</h3><ul class="check-list">${(step.verification?.checks ?? []).map((rule) => `<li><span class="${rule.passed ? 'check-pass' : 'check-fail'}">${rule.passed ? '✓' : '×'}</span>${escape(rule.label)}</li>`).join('') || '<li>No independent verification receipt yet.</li>'}</ul><details><summary>Observer evidence and shared artifacts</summary><pre>${escape(pretty({ verification: step.verification, sharedArtifacts: step.artifacts, conversationId: step.conversationId, pendingMessageId: step.pendingMessageId }))}</pre></details></section><section class="detail-section"><h3>HAI repair</h3>${step.repair ? `<p class="muted">${escape(step.repair.reason)}</p><pre>${escape(pretty(step.repair))}</pre>` : '<p class="muted">No repair requested. Correct permission denials are not capability gaps.</p>'}</section>`;
+    `<div class="detail-meta">${status(step.status)}<span>${escape(current.roles.find((role) => role.id === step.actorId).name)}</span><span>World ${escape(step.worldId)}</span></div><p class="muted">${escape(step.goal)}</p>${step.error ? `<pre>${escape(step.error)}</pre>` : ''}${activity(step)}<section class="detail-section"><h3>Conversation</h3>${step.transcript.length ? step.transcript.map((turn) => `${bubble(turn)}${turn.judgment ? `<div class="detail-verdict">${escape(title(turn.judgment.verdict))} · ${escape(turn.judgment.reason)}</div>` : ''}`).join('') : '<p class="muted">No conversation messages. Fixture and blocked steps are recorded separately.</p>'}</section><section class="detail-section"><h3>Independent API verification</h3><ul class="check-list">${(step.verification?.checks ?? []).map((rule) => `<li><span class="${rule.passed ? 'check-pass' : 'check-fail'}">${rule.passed ? '✓' : '×'}</span>${escape(rule.label)}</li>`).join('') || '<li>No independent verification receipt yet.</li>'}</ul><details><summary>Observer evidence and shared artifacts</summary><pre>${escape(pretty({ verification: step.verification, sharedArtifacts: step.artifacts, conversationId: step.conversationId, pendingMessageId: step.pendingMessageId }))}</pre></details></section><section class="detail-section"><h3>HAI repair</h3>${step.repair ? `<p class="muted">${escape(step.repair.reason)}</p><pre>${escape(pretty(step.repair))}</pre>` : '<p class="muted">No repair requested. Correct permission denials are not capability gaps.</p>'}</section>`;
 }
 function openDesigner() {
   clearHaiInputs();
@@ -260,6 +304,7 @@ document
 $('close-detail').addEventListener('click', () => $('detail-dialog').close());
 $('run-demo').addEventListener('click', async () => {
   try {
+    followLatest = false;
     attach(await api('/api/runs', meta.example));
   } catch (error) {
     notice(error.message);
@@ -272,6 +317,7 @@ $('run-list').addEventListener('click', async (event) => {
   const item = event.target.closest('[data-run]');
   if (item)
     try {
+      followLatest = false;
       attach(await api(`/api/runs/${item.dataset.run}`));
     } catch (error) {
       notice(error.message);
@@ -410,7 +456,8 @@ try {
     checkServices().catch((error) =>
       notice(`Shared services: ${error.message}`),
     );
-  $('campaign-target').innerHTML = meta.targets
+  $('campaign-target').innerHTML = [...meta.targets]
+    .sort((a, b) => Number(a.type === 'demo') - Number(b.type === 'demo'))
     .map(
       (target) =>
         `<option value="${escape(target.id)}">${escape(target.label)}</option>`,
@@ -420,7 +467,21 @@ try {
     .map((role) => `${role.id} | ${role.name} | ${role.description}`)
     .join('\n');
   $('campaign-json').value = pretty(meta.example);
-  await refreshRuns();
+  const requested = new URL(location.href).searchParams.get('run');
+  if (requested) {
+    try {
+      attach(await api(`/api/runs/${encodeURIComponent(requested)}`));
+    } catch (error) {
+      notice(`Saved run unavailable: ${error.message}`);
+    }
+  }
+  await refreshRuns({ discover: !requested });
+  setInterval(
+    () =>
+      refreshRuns({ discover: true }).catch((error) => notice(error.message)),
+    5000,
+  );
+  setInterval(updateElapsed, 1000);
 } catch (error) {
   notice(`Cannot reach the local lab: ${error.message}`);
 }
