@@ -494,6 +494,8 @@ export class CampaignRun extends EventEmitter {
             phase: 'in_progress',
             instructions: step.instructions,
           });
+          // Preserve the evaluator's actual output even if its contract is invalid.
+          step.judgment = clone(lastJudgment);
           assert(
             ['pass', 'fail', 'uncertain'].includes(lastJudgment.verdict) &&
               typeof lastJudgment.goalComplete === 'boolean' &&
@@ -583,12 +585,19 @@ export class CampaignRun extends EventEmitter {
         });
       }
     } catch (error) {
+      const evaluatorError =
+        !step.inFlight &&
+        step.activity?.phase === 'evaluating' &&
+        !this.controller.signal.aborted;
       step.status =
         step.inFlight || error.outcomeUnknown
           ? 'outcome_unknown'
           : this.controller.signal.aborted
             ? 'stopped'
-            : 'failed';
+            : evaluatorError
+              ? 'unverified'
+              : 'failed';
+      if (evaluatorError) step.errorSource = 'evaluator';
       step.error = error.message;
       if (!step.inFlight) delete step.pendingMessageId;
     }

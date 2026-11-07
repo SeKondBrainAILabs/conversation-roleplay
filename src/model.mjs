@@ -53,6 +53,26 @@ export class JsonChatModel {
     return result;
   }
   async transport(purpose, payload) {
+    const compoundContract =
+      purpose === 'judge' && payload.instructions?.length
+        ? '\nThis is a compound evaluation. The instructions array in the response is MANDATORY, not optional. Return every listed instruction exactly once. Required response shape: ' +
+          JSON.stringify({
+            verdict: 'pass|fail|uncertain',
+            goalComplete: 'boolean',
+            category: 'string',
+            reason: 'string',
+            evidence: ['short reference'],
+            instructions: payload.instructions.map(({ id }) => ({
+              id,
+              requestIncluded: 'boolean',
+              verdict: 'pass|fail|uncertain',
+              goalComplete: 'boolean',
+              reason: 'string',
+              evidence: ['short reference'],
+            })),
+          }) +
+          '\nUse actual boolean values and one allowed verdict. Do not return an aggregate-only judgment.'
+        : '';
     return {
       url: this.config.url,
       method: 'POST',
@@ -61,7 +81,7 @@ export class JsonChatModel {
       body: {
         model: this.config.model,
         messages: [
-          { role: 'system', content: prompts[purpose] },
+          { role: 'system', content: prompts[purpose] + compoundContract },
           { role: 'user', content: JSON.stringify(payload) },
         ],
         temperature: purpose === 'judge' ? 0 : 0.6,
