@@ -1,5 +1,6 @@
 /** Dependency scheduler and adaptive conversations. Only verified outputs cross role boundaries. */
 import { EventEmitter } from 'node:events';
+import { preflightCampaignRepairs } from './clarifications.mjs';
 import { validateCampaign } from './contracts.mjs';
 import { assert, at, clone, now, redact, sleep, uuid } from './util.mjs';
 
@@ -32,6 +33,15 @@ export class CampaignRun extends EventEmitter {
     this.actorModel = actorModel;
     this.judgeModel = judgeModel;
     this.repairAdapter = repairAdapter;
+    const repairCheck = preflightCampaignRepairs(
+      this.campaign,
+      adapter.config?.repairContracts,
+      repairAdapter,
+    );
+    assert(
+      !repairCheck.enabled || repairCheck.ready,
+      'HAI answers required before starting; run repair preflight',
+    );
     this.store = store;
     this.secrets = secrets;
     this.controller = new AbortController();
@@ -468,6 +478,8 @@ export class CampaignRun extends EventEmitter {
         step.repair = await this.repairAdapter.repair({
           category: step.judgment.category,
           contract,
+          clarificationAnswers:
+            this.campaign.repairAnswers?.[step.repairContractId],
           runId: this.state.id,
           scenarioId: step.scenarioId,
           stepId: step.id,

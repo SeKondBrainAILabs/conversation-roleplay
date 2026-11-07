@@ -203,6 +203,13 @@ Parent adds a lesson, teacher schedules it, the lesson happens in QA, teacher gi
             spellcheck="false"
           ></textarea>
         </label>
+        <section class="detail-section">
+          <button type="button" id="check-hai-inputs">
+            Check HAI answers before starting
+          </button>
+          <p id="hai-preflight-status" class="muted" role="status"></p>
+          <div id="hai-preflight-questions"></div>
+        </section>
         <p class="form-note">
           Live targets need isolated QA identities and reviewed observer hooks
           in server configuration. Model-generated plans cannot invent endpoints

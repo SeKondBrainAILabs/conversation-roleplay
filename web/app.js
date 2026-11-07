@@ -180,6 +180,7 @@ function renderDetail(index) {
     `<div class="detail-meta">${status(step.status)}<span>${escape(current.roles.find((role) => role.id === step.actorId).name)}</span><span>World ${escape(step.worldId)}</span></div><p class="muted">${escape(step.goal)}</p>${step.error ? `<pre>${escape(step.error)}</pre>` : ''}<section class="detail-section"><h3>Conversation</h3>${step.transcript.length ? step.transcript.map((turn) => `${bubble(turn)}${turn.judgment ? `<div class="detail-verdict">${escape(title(turn.judgment.verdict))} · ${escape(turn.judgment.reason)}</div>` : ''}`).join('') : '<p class="muted">No conversation messages. Fixture and blocked steps are recorded separately.</p>'}</section><section class="detail-section"><h3>Independent API verification</h3><ul class="check-list">${(step.verification?.checks ?? []).map((rule) => `<li><span class="${rule.passed ? 'check-pass' : 'check-fail'}">${rule.passed ? '✓' : '×'}</span>${escape(rule.label)}</li>`).join('') || '<li>No independent verification receipt yet.</li>'}</ul><details><summary>Observer evidence and shared artifacts</summary><pre>${escape(pretty({ verification: step.verification, sharedArtifacts: step.artifacts, conversationId: step.conversationId, pendingMessageId: step.pendingMessageId }))}</pre></details></section><section class="detail-section"><h3>HAI repair</h3>${step.repair ? `<p class="muted">${escape(step.repair.reason)}</p><pre>${escape(pretty(step.repair))}</pre>` : '<p class="muted">No repair requested. Correct permission denials are not capability gaps.</p>'}</section>`;
 }
 function openDesigner() {
+  clearHaiInputs();
   $('form-error').textContent = '';
   $('campaign-dialog').showModal();
 }
@@ -229,7 +230,13 @@ async function plan(kind) {
       $('personas').textContent = pretty(parsedRoles());
       $('personas-panel').classList.remove('hidden');
       $('personas-panel').open = true;
-    } else $('campaign-json').value = pretty(result);
+    } else {
+      const reviewed = JSON.parse(
+        $('campaign-json').value || '{}',
+      ).repairAnswers;
+      if (reviewed) result.repairAnswers = reviewed;
+      $('campaign-json').value = pretty(result);
+    }
     $('planning-state').textContent =
       kind === 'enhance'
         ? 'Personas added. They will be used in the run.'
@@ -310,6 +317,54 @@ $('stop-run').addEventListener('click', async () => {
 });
 $('enhance-roles').addEventListener('click', () => plan('enhance'));
 $('generate-plan').addEventListener('click', () => plan('plan'));
+function clearHaiInputs() {
+  $('hai-preflight-status').textContent = '';
+  $('hai-preflight-questions').replaceChildren();
+}
+$('campaign-target').addEventListener('change', clearHaiInputs);
+$('campaign-json').addEventListener('input', clearHaiInputs);
+async function checkHaiInputs() {
+  $('form-error').textContent = '';
+  const campaign = JSON.parse($('campaign-json').value);
+  campaign.target = $('campaign-target').value;
+  const result = await api('/api/repairs/preflight', campaign);
+  $('hai-preflight-status').textContent = result.ready
+    ? result.contracts.length
+      ? 'Reviewed HAI answers are complete.'
+      : 'No HAI questions are configured for this campaign.'
+    : 'Answer these before starting. This check sends nothing to HAI or the product.';
+  $('hai-preflight-questions').innerHTML = result.contracts
+    .flatMap((contract) =>
+      contract.questions.map(
+        (q) =>
+          `<label>${escape(q.text)}${q.required ? ' *' : ''}${q.locked && q.answer.length > 100 ? `<textarea data-hai-contract="${escape(contract.contractId)}" data-hai-question="${escape(q.id)}" rows="3" readonly>${escape(q.answer)}</textarea>` : `<input data-hai-contract="${escape(contract.contractId)}" data-hai-question="${escape(q.id)}" value="${escape(q.answer)}" maxlength="500" ${q.locked ? 'readonly' : ''}>`}</label>`,
+      ),
+    )
+    .join('');
+  return result;
+}
+$('check-hai-inputs').addEventListener('click', () =>
+  checkHaiInputs().catch((error) => {
+    $('form-error').textContent = error.message;
+  }),
+);
+$('hai-preflight-questions').addEventListener('input', (event) => {
+  const input = event.target.closest('[data-hai-contract]');
+  if (!input) return;
+  try {
+    const campaign = JSON.parse($('campaign-json').value);
+    campaign.repairAnswers ??= {};
+    campaign.repairAnswers[input.dataset.haiContract] ??= {};
+    campaign.repairAnswers[input.dataset.haiContract][
+      input.dataset.haiQuestion
+    ] = input.value;
+    $('campaign-json').value = pretty(campaign);
+    $('hai-preflight-status').textContent =
+      'Answers saved in this draft. Check again before starting.';
+  } catch (error) {
+    $('form-error').textContent = error.message;
+  }
+});
 $('campaign-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   $('form-error').textContent = '';
@@ -318,6 +373,11 @@ $('campaign-form').addEventListener('submit', async (event) => {
     campaign.target = $('campaign-target').value;
     campaign.name = $('campaign-name').value;
     campaign.roles = parsedRoles();
+    const preflight = await api('/api/repairs/preflight', campaign);
+    if (preflight.enabled && !preflight.ready) {
+      await checkHaiInputs();
+      throw new Error('Complete the required HAI answers before starting.');
+    }
     const run = await api('/api/runs', campaign);
     $('campaign-dialog').close();
     attach(run);

@@ -9,6 +9,12 @@ import {
   sleep,
 } from './util.mjs';
 
+import {
+  prepareRepairAnswers,
+  resolveProviderQuestions,
+  DEFAULT_PROPOSAL_PROTOCOL,
+} from './clarifications.mjs';
+
 const allowedCategories = new Set(['missing_capability']);
 const allowedMethods = new Set(['get', 'post', 'put', 'delete']);
 export function validateRepairContract(contract) {
@@ -138,14 +144,29 @@ export class HaiRepairAdapter {
     this.getHeaders = getHeaders;
     this.attempts = new Map();
   }
+  preflight(contract, answers) {
+    validateRepairContract(contract);
+    const secrets = Object.entries(this.env)
+      .filter(([key]) => /(?:TOKEN|SECRET|KEY|PASSWORD)/i.test(key))
+      .map(([, value]) => value);
+    return prepareRepairAnswers(contract, {
+      protocol: this.config?.protocol ?? DEFAULT_PROPOSAL_PROTOCOL,
+      answers,
+      secrets,
+    });
+  }
   async repair(input) {
     const key = JSON.stringify([input.runId, input.scenarioId, input.stepId]);
     if (!this.attempts.has(key)) this.attempts.set(key, this.perform(input));
-    return structuredClone(await this.attempts.get(key));
+    const result = await this.attempts.get(key);
+    if (['needs_preflight', 'disabled', 'not_eligible'].includes(result.status))
+      this.attempts.delete(key);
+    return structuredClone(result);
   }
   async perform({
     category,
     contract,
+    clarificationAnswers,
     runId,
     scenarioId,
     stepId,
@@ -164,7 +185,17 @@ export class HaiRepairAdapter {
         status: 'disabled',
         reason: 'HAI integration is not configured',
       };
-    validateRepairContract(contract);
+    const prepared = this.preflight(contract, clarificationAnswers);
+    if (!prepared.ready)
+      return {
+        status: 'needs_preflight',
+        effectVerified: false,
+        attempts: 0,
+        missingAnswers: prepared.missing,
+        questions: prepared.questions,
+        reason:
+          'Answer required HAI questions before starting; no provider task submitted',
+      };
     assert(
       this.config.contractVerified === true,
       'HAI contract/service identity must be reviewed before enabling',
@@ -191,7 +222,15 @@ export class HaiRepairAdapter {
         }),
       );
     const fingerprint = createHash('sha256')
-      .update(JSON.stringify({ runId, scenarioId, stepId, contract }))
+      .update(
+        JSON.stringify({
+          runId,
+          scenarioId,
+          stepId,
+          contract,
+          answers: prepared.answers,
+        }),
+      )
       .digest('hex');
     const receipt = {
       status: 'submitting',
@@ -200,7 +239,6 @@ export class HaiRepairAdapter {
       at: now(),
       effectVerified: false,
     };
-    await checkpoint(receipt); // Persist intent before the only provider POST.
     const request = async (path, options = {}) =>
       jsonRequest(new URL(path, this.config.baseUrl), {
         headers: this.getHeaders
@@ -211,12 +249,22 @@ export class HaiRepairAdapter {
         ...options,
       });
     const description = `Return only a typed ${protocol} declarative capability proposal. Never execute, emit code, request private data or claim completion. Preserve this reviewed goal: ${contract.summary}. Use only the expected operations supplied in context. Return {kind,capability:{name,description,roles,category,parameters,apiMethod,apiPath,requiresConfirmation,reason}}.`;
+    assert(
+      description.length + prepared.appendix.length <= 4096,
+      'HAI request brief exceeds the provider limit',
+    );
+    await checkpoint(receipt); // Persist intent before the only provider task POST.
     try {
       const accepted = await request('/v1/tasks', {
         method: 'POST',
         body: {
-          description,
+          description: description + prepared.appendix,
           context: {
+            ...(protocol !== DEFAULT_PROPOSAL_PROTOCOL && {
+              skip_clarification: true,
+              clarification_answers: prepared.answers,
+              input_data: prepared.inputData,
+            }),
             execution_mode: 'build',
             proposal_protocol: protocol,
             conversationId: runId,
@@ -269,10 +317,93 @@ export class HaiRepairAdapter {
           return receipt;
         }
         if (data.status === 'awaiting_clarification') {
-          receipt.status = 'needs_clarification';
-          receipt.reason = 'Operator review required; no invented answers sent';
+          const resolved = resolveProviderQuestions(data.questions, prepared);
+          if (!resolved.ready) {
+            Object.assign(receipt, {
+              status: 'needs_clarification',
+              missingAnswers: resolved.missing,
+              questions: resolved.questions,
+              reason:
+                'Provider asked outside the reviewed answer brief; no guessed answers or approvals sent',
+            });
+            await checkpoint(receipt);
+            emit(receipt);
+            return receipt;
+          }
+          const batch = createHash('sha256')
+            .update(
+              JSON.stringify({
+                questions: resolved.questions
+                  .map(({ id, inputField, reviewedQuestionId }) => ({
+                    id,
+                    inputField,
+                    reviewedQuestionId,
+                  }))
+                  .sort((a, b) => a.id.localeCompare(b.id)),
+                answers: Object.entries(resolved.answers).sort(([a], [b]) =>
+                  a.localeCompare(b),
+                ),
+              }),
+            )
+            .digest('hex');
+          receipt.clarifications ??= [];
+          if (receipt.clarifications.some((item) => item.fingerprint === batch))
+            continue;
+          if (receipt.clarifications.length >= 3) {
+            Object.assign(receipt, {
+              status: 'needs_clarification',
+              questions: resolved.questions,
+              reason:
+                'Reviewed answer round limit reached; no further answers posted',
+            });
+            await checkpoint(receipt);
+            emit(receipt);
+            return receipt;
+          }
+          const entry = {
+            fingerprint: batch,
+            status: 'submitting',
+            answers: resolved.answers,
+            at: now(),
+          };
+          receipt.clarifications.push(entry);
+          receipt.status = 'answering_clarification';
           await checkpoint(receipt);
-          return receipt;
+          emit(receipt);
+          try {
+            const reply = await request(
+              `/v1/runs/${encodeURIComponent(receipt.providerRunId)}/clarify`,
+              {
+                method: 'POST',
+                body: { answers: resolved.answers },
+              },
+            );
+            assert(
+              reply.status === 200 &&
+                reply.data.run_id === receipt.providerRunId &&
+                reply.data.status === 'resumed',
+              'HAI clarification receipt is invalid',
+            );
+            entry.status = 'answered';
+            receipt.status = 'polling';
+            await checkpoint(receipt);
+            emit(receipt);
+          } catch (error) {
+            entry.status =
+              error.status >= 400 && error.status < 500
+                ? 'rejected'
+                : 'outcome_unknown';
+            receipt.status =
+              entry.status === 'rejected'
+                ? 'clarification_rejected'
+                : 'clarification_submission_unknown';
+            receipt.reason =
+              'Inspect the existing provider run; this answer batch will not be posted again';
+            await checkpoint(receipt);
+            emit(receipt);
+            return receipt;
+          }
+          continue;
         }
         if (
           data.status === 'failed' &&

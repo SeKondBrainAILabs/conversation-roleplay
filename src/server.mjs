@@ -11,6 +11,10 @@ import { createAdapter } from './adapters.mjs';
 import { DemoRepairAdapter } from './repair.mjs';
 import { validateCampaign, validateGeneratedCampaign } from './contracts.mjs';
 import { assert, redact } from './util.mjs';
+import {
+  preflightCampaignRepairs,
+  RESERVED_REPAIR_STATES,
+} from './clarifications.mjs';
 import { createServiceStack } from './services.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -93,15 +97,7 @@ export function createLab(
       run.steps?.some(
         (step) =>
           step.status === 'outcome_unknown' ||
-          [
-            'submitting',
-            'submission_unknown',
-            'polling',
-            'poll_interrupted',
-            'poll_unavailable',
-            'poll_limit',
-            'needs_clarification',
-          ].includes(step.repair?.status),
+          RESERVED_REPAIR_STATES.has(step.repair?.status),
       ),
     ).length;
     return {
@@ -142,6 +138,17 @@ export function createLab(
     );
     const adapter = createAdapter(targets[campaign.target], { env, fetchImpl });
     const demo = adapter.kind === 'demo';
+    const repairCheck = demo
+      ? { enabled: false, ready: true }
+      : preflightCampaignRepairs(
+          campaign,
+          targets[campaign.target].repairContracts,
+          serviceStack.repairAdapter,
+        );
+    assert(
+      !repairCheck.enabled || repairCheck.ready,
+      'HAI answers required before starting; run repair preflight',
+    );
     const workspace = demo ? null : await serviceStack.preflight();
     requireAccepting();
     const scopeHashes = adapter.isolationScopes?.(campaign) ?? [];
@@ -149,14 +156,7 @@ export function createLab(
       const uncertain = prior.steps?.some(
         (step) =>
           step.status === 'outcome_unknown' ||
-          [
-            'submission_unknown',
-            'submitting',
-            'polling',
-            'poll_interrupted',
-            'poll_unavailable',
-            'poll_limit',
-          ].includes(step.repair?.status),
+          RESERVED_REPAIR_STATES.has(step.repair?.status),
       );
       if (
         ['preparing', 'running', 'paused', 'stopping'].includes(prior.status) ||
@@ -306,6 +306,21 @@ export function createLab(
             summary: run.summary,
           })),
         );
+      if (req.method === 'POST' && url.pathname === '/api/repairs/preflight') {
+        const campaign = validateCampaign(await body(req));
+        assert(targets[campaign.target], 'Unknown configured target');
+        return json(
+          res,
+          200,
+          targets[campaign.target].type === 'demo'
+            ? { enabled: false, ready: true, contracts: [] }
+            : preflightCampaignRepairs(
+                campaign,
+                targets[campaign.target].repairContracts,
+                serviceStack.repairAdapter,
+              ),
+        );
+      }
       if (req.method === 'POST' && url.pathname === '/api/runs') {
         const run = await launch(await body(req));
         return json(res, 202, run.snapshot());
