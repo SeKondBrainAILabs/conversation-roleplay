@@ -91,10 +91,9 @@ function attach(run) {
     current = JSON.parse(event.data);
     lastUpdate = Date.now();
     render();
-    if (
-      !['preparing', 'running', 'paused', 'stopping'].includes(current.status)
-    ) {
+    if (!activeRun(current)) {
       source.close();
+      $('connection').textContent = 'Saved run · all activity recorded';
       refreshRuns();
     }
   };
@@ -102,7 +101,9 @@ function attach(run) {
     $('connection').textContent = 'Reconnecting…';
   };
   source.onopen = () => {
-    $('connection').textContent = 'Live event stream connected';
+    $('connection').textContent = activeRun(current)
+      ? 'Live event stream connected'
+      : 'Saved run · all activity recorded';
   };
 }
 function bubble(turn) {
@@ -127,7 +128,7 @@ function updateElapsed() {
       0,
       Math.floor((Date.now() - Date.parse(item.dataset.since)) / 1000),
     );
-    item.textContent = Number.isFinite(elapsed) ? `Waiting ${elapsed}s` : '';
+    item.textContent = Number.isFinite(elapsed) ? `Elapsed ${elapsed}s` : '';
   });
   if (lastUpdate && current && activeRun(current))
     $('live-state').textContent =
@@ -156,7 +157,15 @@ function render() {
   );
   $('export-run').href = `/api/runs/${current.id}/export`;
   const complete = current.steps.filter((step) =>
-    ['passed', 'simulated'].includes(step.status),
+    [
+      'passed',
+      'simulated',
+      'failed',
+      'blocked',
+      'unverified',
+      'outcome_unknown',
+      'stopped',
+    ].includes(step.status),
   ).length;
   $('metric-actors').textContent = current.roles.length;
   $('metric-messages').textContent = current.steps.reduce(
