@@ -71,10 +71,23 @@ try {
           `Conversation Roleplay: http://127.0.0.1:${lab.server.address().port}`,
         ),
       );
-      const shutdown = () => {
-        for (const run of lab.runs.values()) run.stop();
+      let shuttingDown = false;
+      const shutdown = async () => {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        lab.quiesce();
         lab.server.close();
-        setTimeout(() => process.exit(0), 3000).unref();
+        lab.server.closeAllConnections();
+        await Promise.race([
+          Promise.allSettled(
+            [...lab.runs.values()].map((run) => run.completion),
+          ),
+          new Promise((resolve) => setTimeout(resolve, 2500)),
+        ]);
+        // Release immediately before exit, including when an open SSE stream or
+        // aborted provider request would otherwise keep the close callback waiting.
+        lab.dispose();
+        process.exit(0);
       };
       process.on('SIGINT', shutdown);
       process.on('SIGTERM', shutdown);

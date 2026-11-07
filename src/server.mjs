@@ -80,6 +80,10 @@ export function createLab(
     if (drainUntil > Date.now())
       busy('Deployment is draining; try after the update completes');
   };
+  const quiesce = () => {
+    drainUntil = Infinity;
+    for (const run of runs.values()) run.stop();
+  };
   const deploymentState = () => {
     const all = store.list();
     const active = all.filter((run) =>
@@ -139,6 +143,7 @@ export function createLab(
     const adapter = createAdapter(targets[campaign.target], { env, fetchImpl });
     const demo = adapter.kind === 'demo';
     const workspace = demo ? null : await serviceStack.preflight();
+    requireAccepting();
     const scopeHashes = adapter.isolationScopes?.(campaign) ?? [];
     for (const prior of store.list()) {
       const uncertain = prior.steps?.some(
@@ -457,7 +462,12 @@ export function createLab(
       else res.end();
     }
   });
-  server.on('close', releaseLease);
+  server.on('close', () => {
+    quiesce();
+    Promise.allSettled([...runs.values()].map((run) => run.completion)).then(
+      releaseLease,
+    );
+  });
   return {
     server,
     store,
@@ -465,6 +475,7 @@ export function createLab(
     launch,
     publicRun,
     services: serviceStack,
+    quiesce,
     dispose: releaseLease,
   };
 }
