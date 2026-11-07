@@ -277,9 +277,18 @@ export function resolveProviderQuestions(raw, prepared) {
       'Invalid or duplicate provider question',
     );
     seen.add(q.id);
-    const match = prepared.questions.find(
-      (known) => normalized(known.text) === normalized(q.text),
-    );
+    const match =
+      prepared.questions.find(
+        (known) => normalized(known.text) === normalized(q.text),
+      ) ??
+      prepared.questions.find(
+        (known) =>
+          known.answer &&
+          known.inputField &&
+          known.inputField === q.input_field &&
+          isObject(q.input_schema) &&
+          schemaAccepts(q.input_schema, known.answer, known.inputType),
+      );
     let usable =
       Boolean(match?.answer) &&
       q.requires_attachment !== true &&
@@ -292,6 +301,7 @@ export function resolveProviderQuestions(raw, prepared) {
     questions.push({
       id: q.id,
       text: q.text,
+      ...(match && { reviewedQuestionId: match.id }),
       ...(q.input_field && { inputField: q.input_field }),
     });
     if (usable) answers[q.id] = match.answer;

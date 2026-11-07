@@ -333,9 +333,13 @@ export class HaiRepairAdapter {
           const batch = createHash('sha256')
             .update(
               JSON.stringify({
-                questions: [...resolved.questions].sort((a, b) =>
-                  a.id.localeCompare(b.id),
-                ),
+                questions: resolved.questions
+                  .map(({ id, inputField, reviewedQuestionId }) => ({
+                    id,
+                    inputField,
+                    reviewedQuestionId,
+                  }))
+                  .sort((a, b) => a.id.localeCompare(b.id)),
                 answers: Object.entries(resolved.answers).sort(([a], [b]) =>
                   a.localeCompare(b),
                 ),

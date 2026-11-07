@@ -285,7 +285,15 @@ test('same-run clarification resumes once from reviewed facts, tolerates stale/r
         return response({
           run_id: 'provider',
           status: 'awaiting_clarification',
-          questions: polls === 1 ? questions() : questions().reverse(),
+          questions:
+            polls === 1
+              ? questions()
+              : questions()
+                  .reverse()
+                  .map((q) => ({
+                    ...q,
+                    text: q.text.toUpperCase().replaceAll(' ', '  '),
+                  })),
         });
       return response({
         run_id: 'provider',
@@ -618,6 +626,39 @@ test('reviewed answers satisfy provider length/range constraints without adoptin
       [{ ...n, input_schema: { type: 'integer', maximum: 2 } }],
       p,
     ).ready,
+    false,
+  );
+});
+
+test('reviewed typed runtime fields tolerate rephrasing without trusting a question ID', () => {
+  const prepared = prepareRepairAnswers(baseContract(), {
+    answers: { language: 'English' },
+  });
+  const q = {
+    id: 'runtime_language',
+    text: 'Preferred output language?',
+    input_field: 'language',
+    input_schema: { type: 'string', enum: ['English', 'French'] },
+  };
+  assert.equal(
+    resolveProviderQuestions([q], prepared).answers.runtime_language,
+    'English',
+  );
+  assert.equal(
+    resolveProviderQuestions([{ ...q, input_field: 'new_authority' }], prepared)
+      .ready,
+    false,
+  );
+  assert.equal(
+    resolveProviderQuestions(
+      [{ ...q, input_schema: { type: 'boolean' } }],
+      prepared,
+    ).ready,
+    false,
+  );
+  assert.equal(
+    resolveProviderQuestions([{ id: 'language', text: q.text }], prepared)
+      .ready,
     false,
   );
 });
