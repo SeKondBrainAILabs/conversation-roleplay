@@ -571,3 +571,53 @@ test('different follow-up IDs cannot cause an unbounded answer loop', async () =
   assert.equal(posts, 3);
   assert.equal(polls, 4);
 });
+
+test('reviewed answers satisfy provider length/range constraints without adopting schema defaults', () => {
+  const prepared = prepareRepairAnswers(baseContract(), {
+    answers: { language: 'English' },
+  });
+  const q = {
+    ...questions()[0],
+    input_schema: {
+      type: 'string',
+      minLength: 2,
+      maxLength: 20,
+      default: 'French',
+    },
+  };
+  assert.equal(resolveProviderQuestions([q], prepared).answers.q1, 'English');
+  for (const schema of [
+    { type: 'string', maxLength: 3 },
+    { type: 'string', minLength: 9 },
+    { type: 'string', minLength: -1 },
+  ])
+    assert.equal(
+      resolveProviderQuestions([{ ...q, input_schema: schema }], prepared)
+        .ready,
+      false,
+    );
+  const c = baseContract();
+  c.clarification.questions = [
+    {
+      id: 'count',
+      text: 'How many synthetic samples?',
+      inputField: 'count',
+      inputType: 'number',
+    },
+  ];
+  const p = prepareRepairAnswers(c, { answers: { count: '3' } });
+  const n = {
+    id: 'runtime_count',
+    text: 'How many synthetic samples?',
+    input_field: 'count',
+    input_schema: { type: 'integer', minimum: 1, maximum: 5 },
+  };
+  assert.equal(resolveProviderQuestions([n], p).ready, true);
+  assert.equal(
+    resolveProviderQuestions(
+      [{ ...n, input_schema: { type: 'integer', maximum: 2 } }],
+      p,
+    ).ready,
+    false,
+  );
+});

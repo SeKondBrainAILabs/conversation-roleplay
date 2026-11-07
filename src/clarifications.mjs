@@ -197,6 +197,65 @@ export function prepareRepairAnswers(
   };
 }
 
+function schemaAccepts(schema, answer, declaredType = 'string') {
+  const keys = [
+    'type',
+    'enum',
+    'description',
+    'title',
+    'default',
+    'examples',
+    'minLength',
+    'maxLength',
+    'minimum',
+    'maximum',
+  ];
+  if (
+    !isObject(schema) ||
+    !Object.keys(schema).every((key) => keys.includes(key))
+  )
+    return false;
+  const type = schema.type ?? 'string';
+  if (
+    type !== declaredType &&
+    !(type === 'integer' && declaredType === 'number')
+  )
+    return false;
+  const value = inputValue(answer, declaredType);
+  if (type === 'integer' && !Number.isInteger(value)) return false;
+  if (
+    schema.enum !== undefined &&
+    (!Array.isArray(schema.enum) || !schema.enum.includes(value))
+  )
+    return false;
+  for (const [key, lower] of [
+    ['minLength', true],
+    ['maxLength', false],
+  ]) {
+    if (schema[key] === undefined) continue;
+    if (
+      typeof value !== 'string' ||
+      !Number.isSafeInteger(schema[key]) ||
+      schema[key] < 0 ||
+      (lower ? value.length < schema[key] : value.length > schema[key])
+    )
+      return false;
+  }
+  for (const [key, lower] of [
+    ['minimum', true],
+    ['maximum', false],
+  ]) {
+    if (schema[key] === undefined) continue;
+    if (
+      typeof value !== 'number' ||
+      !Number.isFinite(schema[key]) ||
+      (lower ? value < schema[key] : value > schema[key])
+    )
+      return false;
+  }
+  return true;
+}
+
 /** Match the reviewed question wording; q1-like IDs alone have no semantic meaning. */
 export function resolveProviderQuestions(raw, prepared) {
   assert(
@@ -228,18 +287,8 @@ export function resolveProviderQuestions(raw, prepared) {
     if (q.input_field !== undefined)
       usable &&= q.input_field === match?.inputField;
     const schema = q.input_schema;
-    if (schema && usable) {
-      usable &&=
-        isObject(schema) &&
-        Object.keys(schema).every((key) =>
-          ['type', 'enum', 'description', 'title'].includes(key),
-        ) &&
-        (schema.type ?? 'string') === (match.inputType ?? 'string');
-      if (usable && schema.enum)
-        usable =
-          Array.isArray(schema.enum) &&
-          schema.enum.includes(inputValue(match.answer, schema.type));
-    }
+    if (schema && usable)
+      usable = schemaAccepts(schema, match.answer, match.inputType);
     questions.push({
       id: q.id,
       text: q.text,
