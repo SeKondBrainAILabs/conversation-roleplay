@@ -495,3 +495,32 @@ test('progress snapshots expose pending product reply before any invented assist
   assert.equal(result.steps[0].activity.phase, 'finished');
   assert.ok(result.events.some((event) => event.phase === 'composing'));
 });
+
+test('generated live plans use only configured QA worlds and actor bindings', () => {
+  const input = campaign([scenario('known', [step('read', 'parent')])]);
+  const options = {
+    target: input.target,
+    roles: input.roles,
+    worlds: [{ id: 'known', actorIds: ['parent'] }],
+  };
+  assert.equal(
+    validateGeneratedCampaign(input, options).scenarios[0].worldId,
+    'known',
+  );
+  assert.throws(
+    () =>
+      validateGeneratedCampaign(input, {
+        ...options,
+        worlds: [{ id: 'different', actorIds: ['parent'] }],
+      }),
+    /unbound actor/,
+  );
+  assert.throws(
+    () =>
+      validateGeneratedCampaign(input, {
+        ...options,
+        worlds: [{ id: 'known', actorIds: ['teacher'] }],
+      }),
+    /unbound actor/,
+  );
+});
