@@ -7,7 +7,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createLab } from '../src/server.mjs';
 import { example } from '../src/server.mjs';
-import { validateManifest, deploy } from '../deploy/pull-runner.mjs';
+import {
+  validateManifest,
+  deploy,
+  deploymentWorkspace,
+  verifyWorkspaceContainer,
+} from '../deploy/pull-runner.mjs';
 import { archiveIdentity } from '../deploy/image-identity.mjs';
 
 const revision = 'a'.repeat(40);
@@ -18,6 +23,46 @@ const provenance = {
   platform: 'linux/arm64',
   archiveSha256: 'b'.repeat(64),
 };
+
+function ownedContainer(workspace = 'conversation-roleplay', port = '4318') {
+  return {
+    Name: `/${workspace}`,
+    Config: {
+      Labels: {
+        'ai.sekondbrain.roleplay.managed': 'true',
+        'com.docker.compose.project': workspace,
+        'com.docker.compose.service': 'lab',
+      },
+    },
+    NetworkSettings: {
+      Ports: { '4318/tcp': [{ HostIp: '127.0.0.1', HostPort: port }] },
+    },
+  };
+}
+
+test('workspace names remain inside the roleplay namespace', () => {
+  assert.equal(deploymentWorkspace({}), 'conversation-roleplay');
+  assert.equal(
+    deploymentWorkspace({ workspace: 'conversation-roleplay-live' }),
+    'conversation-roleplay-live',
+  );
+  for (const workspace of ['other-app', '../conversation-roleplay', '', '-x', 'conversation-roleplay;stop'])
+    assert.throws(() => deploymentWorkspace({ workspace }));
+});
+
+test('workspace identity binds the Compose owner and the exact dashboard port', () => {
+  const workspace = 'conversation-roleplay-live';
+  const dashboard = 'http://127.0.0.1:4319';
+  const good = ownedContainer(workspace, '4319');
+  verifyWorkspaceContainer(good, workspace, dashboard);
+  for (const change of [
+    { Name: '/conversation-roleplay' },
+    { Config: ownedContainer().Config },
+    { NetworkSettings: ownedContainer(workspace, '4318').NetworkSettings },
+    { NetworkSettings: { Ports: { '4318/tcp': [{ HostIp: '0.0.0.0', HostPort: '4319' }] } } },
+  ])
+    assert.throws(() => verifyWorkspaceContainer({ ...good, ...change }, workspace, dashboard));
+});
 test('deployment rejects wrong commit, run, architecture and corrupted archives', () => {
   const manifest = {
     version: 2,
@@ -136,7 +181,9 @@ test('deployment drain is independently authenticated and blocks campaign starts
   assert.equal(state.uncertain, 1);
 });
 
-test('failed post-cutover readiness restores the previous image before releasing the drain', async () => {
+for (const workspace of ['conversation-roleplay', 'conversation-roleplay-live'])
+test(`${workspace}: failed readiness restores its previous image before releasing the drain`, async () => {
+  const port = workspace === 'conversation-roleplay' ? '4318' : '4319';
   const directory = mkdtempSync(join(tmpdir(), 'roleplay-rollback-'));
   process.env.ROLEPLAY_TEST_DEPLOY_TOKEN = 'deployment-private-'.repeat(3);
   const imageId = `sha256:${'c'.repeat(64)}`;
@@ -148,6 +195,8 @@ test('failed post-cutover readiness restores the previous image before releasing
   let replaced = false;
   const result = deploy(
     {
+      workspace,
+      dashboard: `http://127.0.0.1:${port}`,
       directory,
       deployTokenEnv: 'ROLEPLAY_TEST_DEPLOY_TOKEN',
       configFile: '/tmp/config',
@@ -204,14 +253,16 @@ test('failed post-cutover readiness restores the previous image before releasing
           );
         }
         assert.equal(command, 'docker');
-        if (args[0] === 'container')
+        if (args[0] === 'container') {
+          assert.equal(args[2], workspace);
           return JSON.stringify([
             {
               Image: replaced ? runtimeImageId : previousImage,
-              Config: { Labels: { 'ai.sekondbrain.roleplay.managed': 'true' } },
+              ...ownedContainer(workspace, port),
               State: { Health: { Status: 'healthy' } },
             },
           ]);
+        }
         if (args[0] === 'image')
           return JSON.stringify([
             {
@@ -227,6 +278,8 @@ test('failed post-cutover readiness restores the previous image before releasing
             },
           ]);
         if (args[0] === 'compose') {
+          assert.equal(args[2], workspace);
+          assert.equal(options.env.ROLEPLAY_CONTAINER_NAME, workspace);
           operations.push(
             options.env.ROLEPLAY_IMAGE === previousImage
               ? 'rollback'
@@ -237,6 +290,7 @@ test('failed post-cutover readiness restores the previous image before releasing
         return '';
       },
       fetchImpl: async (url) => {
+        assert.equal(new URL(url).port, port);
         const path = new URL(url).pathname;
         if (path.endsWith('/drain')) operations.push('drain');
         if (path.endsWith('/resume')) operations.push('resume');
@@ -256,6 +310,81 @@ test('failed post-cutover readiness restores the previous image before releasing
   await assert.rejects(result, /shared services are not ready/);
   assert.deepEqual(operations, ['drain', 'replace', 'rollback', 'resume']);
   assert.equal(existsSync(join(directory, 'deployment.json')), false);
+  assert.equal(existsSync(join(directory, 'runner.lock')), false);
+  delete process.env.ROLEPLAY_TEST_DEPLOY_TOKEN;
+});
+
+test('a new workspace installs without reading or draining the retained workspace', async () => {
+  const workspace = 'conversation-roleplay-live';
+  const directory = mkdtempSync(join(tmpdir(), 'roleplay-isolated-install-'));
+  const archive = Buffer.from('separate workspace image');
+  const imageId = `sha256:${'c'.repeat(64)}`;
+  const configDigest = `sha256:${'f'.repeat(64)}`;
+  const archiveSha256 = createHash('sha256').update(archive).digest('hex');
+  process.env.ROLEPLAY_TEST_DEPLOY_TOKEN = 'new-workspace-token-'.repeat(3);
+  let started = false;
+  const paths = [];
+  const receipt = await deploy({
+    workspace, directory, dashboard: 'http://127.0.0.1:4319',
+    deployTokenEnv: 'ROLEPLAY_TEST_DEPLOY_TOKEN', allowInitialInstall: true,
+    configFile: '/private/new-workspace/config.json',
+    envFile: '/private/new-workspace/services.env', composeFile: '/trusted/compose.yml',
+  }, {
+    execute(command, args, options = {}) {
+      if (command === 'gh') {
+        if (args[0] === 'run') {
+          const dest = args.at(-1);
+          writeFileSync(join(dest, 'image.tar'), archive);
+          writeFileSync(join(dest, 'manifest.json'), JSON.stringify({
+            version: 2, ...provenance, imageId, imageConfigDigest: configDigest, archiveSha256,
+          }));
+          return '';
+        }
+        const path = args[1];
+        return JSON.stringify(path.includes('git/ref') ? { object: { sha: revision } }
+          : path.includes('artifacts') ? { artifacts: [{
+            id: 987, name: 'conversation-roleplay-linux-arm64', expired: false,
+            workflow_run: { head_sha: revision },
+          }] } : { workflow_runs: [{
+            id: 123, head_sha: revision, head_branch: 'main', event: 'push',
+            status: 'completed', conclusion: 'success', run_attempt: 1,
+            path: '.github/workflows/test.yml',
+          }] });
+      }
+      assert.equal(command, 'docker');
+      if (args[0] === 'container') {
+        assert.equal(args[2], workspace);
+        if (!started) throw new Error('New workspace not installed');
+        return JSON.stringify([{ ...ownedContainer(workspace, '4319'), Image: imageId }]);
+      }
+      if (args[0] === 'image') return JSON.stringify([{
+        Id: imageId, Os: 'linux', Architecture: 'arm64', Config: { Labels: {
+          'org.opencontainers.image.revision': revision,
+          'org.opencontainers.image.source': `https://github.com/${provenance.repository}`,
+        } },
+      }]);
+      if (args[0] === 'compose') {
+        assert.equal(args[2], workspace);
+        assert.equal(options.env.ROLEPLAY_CONTAINER_NAME, workspace);
+        assert.equal(options.env.ROLEPLAY_PORT, '4319');
+        assert.equal(options.env.ROLEPLAY_CONFIG_FILE, '/private/new-workspace/config.json');
+        started = true;
+      }
+      return '';
+    },
+    fetchImpl: async (url) => {
+      const u = new URL(url);
+      assert.equal(u.port, '4319');
+      paths.push(u.pathname);
+      assert.notEqual(u.pathname, '/api/deployment/drain');
+      return Response.json(u.pathname === '/healthz'
+        ? { status: 'ok', revision } : u.pathname === '/readyz' ? { ready: true } : {});
+    },
+    inspectArchive: () => ({ configDigest }),
+  });
+  assert.equal(receipt.workspace, workspace);
+  assert.equal(receipt.previousImageId, null);
+  assert.deepEqual(paths, ['/healthz', '/readyz', '/api/deployment/resume']);
   assert.equal(existsSync(join(directory, 'runner.lock')), false);
   delete process.env.ROLEPLAY_TEST_DEPLOY_TOKEN;
 });

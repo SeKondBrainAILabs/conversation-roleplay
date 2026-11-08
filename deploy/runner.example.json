@@ -1,5 +1,6 @@
 {
   "repository": "SeKondBrainAILabs/conversation-roleplay",
+  "workspace": "conversation-roleplay",
   "workflow": "test.yml",
   "platform": "linux/arm64",
   "directory": "/absolute/private/roleplay/deployment",

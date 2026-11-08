@@ -19,6 +19,37 @@ import { fileURLToPath } from 'node:url';
 import { assert } from '../src/util.mjs';
 import { archiveIdentity } from './image-identity.mjs';
 
+export function deploymentWorkspace(config) {
+  const workspace = config.workspace ?? 'conversation-roleplay';
+  assert(
+    /^conversation-roleplay(?:-[a-z0-9][a-z0-9-]{0,39})?$/.test(workspace),
+    'Invalid deployment workspace',
+  );
+  return workspace;
+}
+
+export function verifyWorkspaceContainer(container, workspace, dashboard) {
+  const labels = container.Config?.Labels;
+  assert(
+    container.Name === `/${workspace}` &&
+      labels?.['ai.sekondbrain.roleplay.managed'] === 'true' &&
+      labels?.['com.docker.compose.project'] === workspace &&
+      labels?.['com.docker.compose.service'] === 'lab',
+    'Refusing to replace a container outside the configured workspace',
+  );
+  const bindings = container.NetworkSettings?.Ports?.['4318/tcp'];
+  assert(
+    Array.isArray(bindings) &&
+      bindings.length > 0 &&
+      bindings.every(
+        (binding) =>
+          ['127.0.0.1', '::1'].includes(binding.HostIp) &&
+          binding.HostPort === new URL(dashboard).port,
+      ),
+    'Dashboard does not belong to the configured workspace container',
+  );
+}
+
 export function validateManifest(
   manifest,
   { repository, revision, runId, platform, archiveSha256 },
@@ -74,6 +105,7 @@ export async function deploy(
     'Invalid trusted deployment source',
   );
   const directory = resolve(config.directory);
+  const workspace = deploymentWorkspace(config);
   const base = config.dashboard ?? 'http://127.0.0.1:4318';
   assert(
     /^http:\/\/(?:127\.0\.0\.1|localhost):\d+$/.test(base),
@@ -87,6 +119,7 @@ export async function deploy(
     ROLEPLAY_CONFIG_FILE: resolve(config.configFile),
     ROLEPLAY_ENV_FILE: resolve(config.envFile),
     ROLEPLAY_PORT: new URL(base).port,
+    ROLEPLAY_CONTAINER_NAME: workspace,
   };
   const composeFile = resolve(config.composeFile);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -115,7 +148,7 @@ export async function deploy(
       [
         'compose',
         '--project-name',
-        'conversation-roleplay',
+        workspace,
         '--file',
         composeFile,
         ...args,
@@ -187,16 +220,13 @@ export async function deploy(
     }
     try {
       previous = JSON.parse(
-        docker('container', 'inspect', 'conversation-roleplay'),
+        docker('container', 'inspect', workspace),
       )[0];
     } catch {
       /* First install must be explicitly allowed. */
     }
     if (previous) {
-      assert(
-        previous.Config.Labels?.['ai.sekondbrain.roleplay.managed'] === 'true',
-        'Refusing to replace an unowned container',
-      );
+      verifyWorkspaceContainer(previous, workspace, base);
       const health = await (
         await fetchImpl(`${base}/healthz`, {
           signal: AbortSignal.timeout(10000),
@@ -301,7 +331,6 @@ export async function deploy(
     const image = `conversation-roleplay:verified-${revision}`;
     docker('tag', loaded.Id, image);
     try {
-      drained = true;
       compose(
         image,
         'up',
@@ -312,6 +341,15 @@ export async function deploy(
         '90',
         'lab',
       );
+      const running = JSON.parse(
+        docker('container', 'inspect', workspace),
+      )[0];
+      verifyWorkspaceContainer(running, workspace, base);
+      drained = true;
+      assert(
+        running.Image === loaded.Id,
+        'Running image differs from verified build',
+      );
       const health = await (
         await fetchImpl(`${base}/healthz`, {
           signal: AbortSignal.timeout(10000),
@@ -320,13 +358,6 @@ export async function deploy(
       assert(
         health.status === 'ok' && health.revision === revision,
         'Deployed revision health mismatch',
-      );
-      const running = JSON.parse(
-        docker('container', 'inspect', 'conversation-roleplay'),
-      )[0];
-      assert(
-        running.Image === loaded.Id,
-        'Running image differs from verified build',
       );
       const readinessResponse = await fetchImpl(`${base}/readyz`, {
         signal: AbortSignal.timeout(45000),
@@ -341,6 +372,7 @@ export async function deploy(
         status: 'deployed',
         at: new Date().toISOString(),
         repository,
+        workspace,
         revision,
         runId: run.id,
         sourceBranch,
