@@ -87,6 +87,26 @@ The example version is not an instruction to reuse an existing tag. Check local 
 
 ## Observation and recovery
 
+### Separate workspaces
+
+The trusted runner's `workspace` setting defaults to `conversation-roleplay`.
+It selects both the Compose project and container name, so each workspace has
+its own `runs` volume. For a separate live lab, use a name such as
+`conversation-roleplay-live`, a different loopback dashboard port such as
+`http://127.0.0.1:4319`, and separate private configuration, credential and
+deployment directories. Workspace names must stay in the `conversation-roleplay`
+namespace. The runner verifies the container's name, Compose ownership and
+published loopback port before sending deployment controls.
+
+This supports keeping a prior workspace available for inspection when it has
+unknown outcomes. Provision fresh QA families and actor credentials for the new
+workspace; deployment isolation does not provide product authorization. Keep
+the prior configuration, dashboard, receipt and evidence volume intact. Its
+unknown outcomes and reserved QA scopes still require reconciliation. Each
+workspace retains the normal rule that active campaigns and uncertain requests
+block replacement. A new workspace uses the normal verified initial-install
+path and does not drain or replace the retained container.
+
 - `/healthz`: process liveness and immutable source revision. Docker's healthcheck uses this endpoint.
 - `/readyz`: required service readiness, returning HTTP 503 when unavailable. Identity and OpenAPI checks do not claim that inference, a product action or a HAI repair succeeded.
 - `/api/services`: the same bounded diagnostic report, suitable for the dashboard. No credentials are included.

@@ -3,7 +3,7 @@ services:
   lab:
     image: ${ROLEPLAY_IMAGE:-conversation-roleplay:local}
     pull_policy: never
-    container_name: conversation-roleplay
+    container_name: ${ROLEPLAY_CONTAINER_NAME:-conversation-roleplay}
     restart: unless-stopped
     init: true
     environment:
