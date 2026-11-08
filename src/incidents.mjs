@@ -102,14 +102,14 @@ export function capabilityIncident(input) {
       ...(contract.caseId && { case_id: contract.caseId }),
       ...(contract.skillId && { skill_id: contract.skillId }),
       ...(contract.apiId && { api_id: contract.apiId }),
-      trace_id: `roleplay.${fingerprint}`,
+      trace_id: `trace.roleplay.${fingerprint}`,
       safe_context: {
         adapter: 'conversation-roleplay',
         component: 'conversation_evaluation',
         schema_version: '1',
         completion_state: 'failed',
         environment: 'test',
-        eval_id: `roleplay.${fingerprint}`,
+        eval_id: `trace.roleplay.${fingerprint}`,
         error_class:
           input.step.verification?.status === 'failed'
             ? 'effect_mismatch'

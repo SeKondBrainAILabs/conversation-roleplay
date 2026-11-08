@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   KoraOneIncidentClient,
   capabilityIncident,
@@ -99,6 +100,24 @@ test('the incident payload contains configured graph references and typed diagno
     () => validateIncidentContract({ ...contract, orgId: 'spoof' }),
     /authority/,
   );
+});
+test('the submitted trace satisfies the pinned Kora One HTTP contract', async () => {
+  const peer = JSON.parse(
+    readFileSync(new URL('./fixtures/kora-one-trace-contract.json', import.meta.url)),
+  ).traceIdentifier;
+  const pattern = new RegExp(peer.pattern);
+  const value = input();
+  const c = client(async (_url, options) => {
+    const body = JSON.parse(options.body);
+    assert.ok(body.trace_id.length >= peer.min_length);
+    assert.ok(body.trace_id.length <= peer.max_length);
+    assert.match(body.trace_id, pattern);
+    assert.equal(body.safe_context.eval_id, body.trace_id);
+    // The old identifier was accepted by mocks but rejected by the real API.
+    assert.equal(pattern.test(`roleplay.${capabilityIncident(value).fingerprint}`), false);
+    return response({ created: true, incident: incident(body) }, 202);
+  });
+  assert.equal((await c.report(value)).status, 'incident_recorded');
 });
 test('correct permission denials, evaluator errors, invalid actor requests and unknown outcomes do not become product repairs', async () => {
   for (const bad of [
