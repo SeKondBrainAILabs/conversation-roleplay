@@ -1,0 +1,11 @@
+{
+  "peer": "SeKondBrainAILabs/Kora_One",
+  "sourceCommit": "99ef4f14316a720143eb65af23abc37d674752b2",
+  "sourceFile": "src/backend/services/capability_incident_service.py",
+  "sourceSha256": "65c53bfe18b34eb37039c535ced5a5e43c3efd1dc4b34748e7f12bef98426132",
+  "traceIdentifier": {
+    "min_length": 16,
+    "max_length": 128,
+    "pattern": "^(?:[a-f0-9]{16,64}|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|(?:trace|tr|req|request|span|corr|correlation)[_.:-][A-Za-z0-9][A-Za-z0-9_.:-]{7,110})$"
+  }
+}
