@@ -182,6 +182,7 @@ export async function deploy(
   try {
     const revision = api(`git/ref/heads/${sourceBranch}`).object.sha;
     assert(/^[a-f0-9]{40}$/.test(revision), 'Invalid source revision');
+    composeEnv.ROLEPLAY_REVISION = revision;
     if (releaseTag)
       assert(
         releaseRevision() === revision,

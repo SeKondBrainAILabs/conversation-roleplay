@@ -367,6 +367,7 @@ test('a new workspace installs without reading or draining the retained workspac
         assert.equal(args[2], workspace);
         assert.equal(options.env.ROLEPLAY_CONTAINER_NAME, workspace);
         assert.equal(options.env.ROLEPLAY_PORT, '4319');
+        assert.equal(options.env.ROLEPLAY_REVISION, revision);
         assert.equal(options.env.ROLEPLAY_CONFIG_FILE, '/private/new-workspace/config.json');
         started = true;
       }
