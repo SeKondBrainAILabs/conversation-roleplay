@@ -11,6 +11,7 @@ services:
       ROLEPLAY_RUNS_DIR: /data/runs
       ROLEPLAY_START_DRAINED: "true"
       ROLEPLAY_PUBLIC_PORT: ${ROLEPLAY_PORT:-4318}
+      ROLEPLAY_REVISION: ${ROLEPLAY_REVISION:?Set ROLEPLAY_REVISION to the verified release commit}
     env_file:
       - ${ROLEPLAY_ENV_FILE:?Set ROLEPLAY_ENV_FILE to a private service credential file}
     ports:
