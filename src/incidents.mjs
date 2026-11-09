@@ -87,9 +87,38 @@ export function capabilityIncident(input) {
     incidentEligible(input.step),
     'Only an evaluated product failure may become a HAI incident',
   );
+  assert(
+    typeof input.sourceRevision === 'string' &&
+      /^[a-f0-9]{40,64}$/.test(input.sourceRevision),
+    'Incident evidence needs the exact tested source revision',
+  );
   const fingerprint = createHash('sha256')
     .update(
       JSON.stringify([input.runId, input.scenarioId, input.step.id, contract]),
+    )
+    .digest('hex');
+  const failedCheckCount =
+    input.step.verification?.checks?.filter((item) => item.passed === false)
+      .length ?? 0;
+  const verificationFailed = input.step.verification?.status === 'failed';
+  const judgmentFailed = input.step.judgment?.verdict === 'fail';
+  const evaluationSource =
+    verificationFailed && judgmentFailed
+      ? 'combined'
+      : verificationFailed
+        ? 'api_readback'
+        : 'conversation_judge';
+  const evidenceDigest = createHash('sha256')
+    .update(
+      JSON.stringify({
+        evaluationSource,
+        failedCheckCount,
+        judgmentCategory: judgmentFailed
+          ? input.step.judgment.category
+          : null,
+        judgmentVerdict: judgmentFailed ? 'fail' : null,
+        verificationStatus: input.step.verification?.status ?? null,
+      }),
     )
     .digest('hex');
   return {
@@ -110,8 +139,14 @@ export function capabilityIncident(input) {
         completion_state: 'failed',
         environment: 'test',
         eval_id: `trace.roleplay.${fingerprint}`,
+        evaluation_source: evaluationSource,
+        evaluation_verdict: 'fail',
+        evidence_digest: evidenceDigest,
+        effect_verified: false,
+        failed_check_count: failedCheckCount,
+        source_revision: input.sourceRevision,
         error_class:
-          input.step.verification?.status === 'failed'
+          verificationFailed
             ? 'effect_mismatch'
             : input.step.judgment.category,
       },
@@ -142,11 +177,16 @@ export function preflightIncidentContracts(campaign, adapter, client) {
 }
 
 export class KoraOneIncidentClient {
-  constructor(config, coreBackend, { fetchImpl, getHeaders } = {}) {
+  constructor(
+    config,
+    coreBackend,
+    { fetchImpl, getHeaders, getClientId } = {},
+  ) {
     this.config = config;
     this.coreBackend = coreBackend;
     this.fetchImpl = fetchImpl;
     this.getHeaders = getHeaders;
+    this.getClientId = getClientId;
     this.attempts = new Map();
   }
   report(input) {
@@ -154,7 +194,10 @@ export class KoraOneIncidentClient {
       return Promise.resolve({ status: 'disabled', effectVerified: false });
     if (!incidentEligible(input.step))
       return Promise.resolve({ status: 'not_eligible', effectVerified: false });
-    const prepared = capabilityIncident(input);
+    const prepared = capabilityIncident({
+      ...input,
+      sourceRevision: this.config.sourceRevision,
+    });
     const previous = input.step.incident;
     if (
       [
@@ -178,8 +221,14 @@ export class KoraOneIncidentClient {
     assert(
       this.config.contractVerified === true &&
         this.coreBackend &&
-        this.getHeaders,
+        this.getHeaders &&
+        this.getClientId,
       'Review the Kora One contract and configure canonical service identity',
+    );
+    assert(
+      this.config.reporterClientId === 'conversation-roleplay-feet' &&
+        this.getClientId() === this.config.reporterClientId,
+      'Kora One needs the dedicated conversation-roleplay-feet reporter identity',
     );
     const origin = new URL(this.config.baseUrl);
     assert(
@@ -232,49 +281,57 @@ export class KoraOneIncidentClient {
     };
   }
   async reconcile(input, receipt) {
-    const prepared = capabilityIncident(input);
+    const prepared = capabilityIncident({
+      ...input,
+      sourceRevision: receipt.sourceRevision ?? this.config.sourceRevision,
+    });
     assert(
       receipt.fingerprint === prepared.fingerprint,
       'Incident reconciliation fingerprint mismatch',
     );
     const { origin, headers, identity } = await this.transport(input.signal);
-    const { data } = await jsonRequest(
-      new URL(
-        `/api/internal/capabilities/incidents?status=all&product=${prepared.body.source_product}&limit=100`,
-        origin,
-      ),
-      {
-        headers,
-        signal: input.signal,
-        fetchImpl: this.fetchImpl,
-        timeoutMs: 15000,
-      },
-    );
-    assert(Array.isArray(data.incidents), 'Invalid incident readback');
-    const matches = data.incidents.filter(
-      (item) => item.trace_id === prepared.body.trace_id,
-    );
+    let incident;
+    let lookupFailure = null;
+    try {
+      const { data } = await jsonRequest(
+        new URL(
+          `/api/internal/capabilities/incidents/receipts/${encodeURIComponent(prepared.body.trace_id)}`,
+          origin,
+        ),
+        {
+          headers,
+          signal: input.signal,
+          fetchImpl: this.fetchImpl,
+          timeoutMs: 15000,
+        },
+      );
+      incident = data.incident;
+    } catch (error) {
+      incident = null;
+      lookupFailure = Number.isInteger(error?.status)
+        ? `http_${error.status}`
+        : 'transport_or_schema_error';
+    }
     let result;
-    if (
-      matches.length !== 1 ||
-      !this.correlated(matches[0], prepared, identity)
-    )
+    if (!this.correlated(incident, prepared, identity))
       result = {
         ...receipt,
         status: 'submission_unknown',
         effectVerified: false,
+        reconciliationError: lookupFailure ?? 'receipt_not_found',
         reason:
-          'No unique correlated receipt in the bounded readback. Keep quarantine; do not resubmit.',
+          'Exact receipt readback did not produce one correlated incident. Keep quarantine; do not resubmit.',
       };
     else
       result = {
         ...receipt,
         status: 'incident_recorded',
-        incidentId: matches[0].incident_id,
-        haiDeliveryStatus: matches[0].hai_delivery_status,
-        registryVersion: matches[0].registry_version,
-        registryDigest: matches[0].registry_digest,
+        incidentId: incident.incident_id,
+        haiDeliveryStatus: incident.hai_delivery_status,
+        registryVersion: incident.registry_version,
+        registryDigest: incident.registry_digest,
         effectVerified: false,
+        reconciliationError: null,
         reason:
           'Correlated by GET only. No product effect or HAI repair is established.',
       };
@@ -285,6 +342,7 @@ export class KoraOneIncidentClient {
     return (
       /^capinc_[a-f0-9]{32}$/.test(incident?.incident_id) &&
       incident.org_id === identity.orgId &&
+      incident.reporter_client_id === this.config.reporterClientId &&
       incident.trace_id === prepared.body.trace_id &&
       incident.source_product === prepared.body.source_product &&
       JSON.stringify(incident.role_ids) ===
@@ -308,6 +366,7 @@ export class KoraOneIncidentClient {
       at: now(),
       repairLead: 'hai',
       effectVerified: false,
+      sourceRevision: this.config.sourceRevision,
     };
     await input.checkpoint(structuredClone(receipt));
     try {

@@ -1,12 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   KoraOneIncidentClient,
   capabilityIncident,
   incidentEligible,
   validateIncidentContract,
   CampaignRun,
+  createLab,
 } from '../src/index.mjs';
 import { createServiceStack } from '../src/services.mjs';
 const contract = {
@@ -47,14 +50,17 @@ const input = () => ({
   platformRole: 'child',
   runId: 'private-run-id',
   scenarioId: 'private-scenario',
+  sourceRevision: 'd'.repeat(40),
   checkpoint: async () => {},
 });
 const identity = { orgId: 'canonical-org', userId: 'service-user' };
 const config = {
   enabled: true,
   contractVerified: true,
+  reporterClientId: 'conversation-roleplay-feet',
   baseUrl: 'https://kora.example',
   probeProduct: 'piggybank',
+  sourceRevision: 'd'.repeat(40),
 };
 const response = (value, status = 200) =>
   new Response(JSON.stringify(value), {
@@ -64,6 +70,7 @@ const response = (value, status = 200) =>
 const incident = (body) => ({
   ...body,
   org_id: identity.orgId,
+  reporter_client_id: config.reporterClientId,
   incident_id: 'capinc_' + 'a'.repeat(32),
   case_id: body.case_id ?? null,
   skill_id: body.skill_id ?? null,
@@ -81,6 +88,7 @@ const client = (fetchImpl) =>
       getHeaders: async () => ({
         Authorization: 'Bearer private-service-credential',
       }),
+      getClientId: () => 'conversation-roleplay-feet',
     },
   );
 test('the incident payload contains configured graph references and typed diagnostics, never private conversation or observer facts', () => {
@@ -92,6 +100,9 @@ test('the incident payload contains configured graph references and typed diagno
   assert.equal(value.body.case_id, contract.caseId);
   assert.equal(value.fingerprint.length, 64);
   assert.equal(value.body.safe_context.adapter, 'conversation-roleplay');
+  assert.equal(value.body.safe_context.evaluation_verdict, 'fail');
+  assert.equal(value.body.safe_context.effect_verified, false);
+  assert.equal(value.body.safe_context.evidence_digest.length, 64);
   assert.throws(
     () => capabilityIncident({ ...input(), platformRole: 'parent' }),
     /authenticated platform/,
@@ -152,6 +163,8 @@ test('an independent failed API assertion is reported even when the LLM passes t
   assert.equal(incidentEligible(value.step), true);
   const payload = capabilityIncident(value).body;
   assert.equal(payload.safe_context.error_class, 'effect_mismatch');
+  assert.equal(payload.safe_context.evaluation_source, 'api_readback');
+  assert.equal(payload.safe_context.failed_check_count, 1);
 });
 test('one incident POST uses canonical identity and idempotency, preserves the failed result and never claims a healed effect', async () => {
   let calls = 0;
@@ -198,8 +211,12 @@ test('an uncertain submission is never repeated, including by a new client after
   value.checkpoint = async (r) => reconciledCheckpoints.push(r);
   const recovered = client(async (url, options) => {
     assert.equal(options.method, 'GET');
-    assert.equal(new URL(url).searchParams.get('status'), 'all');
-    return response({ incidents: [incident(capabilityIncident(value).body)] });
+    assert.equal(
+      new URL(url).pathname,
+      `/api/internal/capabilities/incidents/receipts/${capabilityIncident(value).body.trace_id}`,
+    );
+    assert.equal(new URL(url).search, '');
+    return response({ incident: incident(capabilityIncident(value).body) });
   });
   assert.equal((await recovered.report(value)).status, 'submission_unknown');
   const correlated = await recovered.reconcile(value, unknown);
@@ -208,8 +225,122 @@ test('an uncertain submission is never repeated, including by a new client after
   assert.deepEqual(reconciledCheckpoints, [correlated]);
   assert.equal(posts, 1);
 });
+test('dashboard startup reconciles an uncertain incident by exact receipt GET without replaying its POST', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'roleplay-reconcile-'));
+  const orgId = '64f0a200-e26e-4dd0-87a2-3d7db75fc429';
+  const userId = '74f0a200-e26e-4dd0-87a2-3d7db75fc430';
+  const savedStep = {
+    ...step(),
+    worldId: 'world',
+    actorId: 'child',
+    scenarioId: 'story',
+  };
+  const prepared = capabilityIncident({
+    contract,
+    step: savedStep,
+    product: 'piggybank',
+    platformRole: 'child',
+    runId: 'saved-run',
+    scenarioId: 'story',
+    sourceRevision: 'd'.repeat(40),
+  });
+  savedStep.incident = {
+    status: 'submission_unknown',
+    fingerprint: prepared.fingerprint,
+    sourceRevision: 'd'.repeat(40),
+    effectVerified: false,
+  };
+  writeFileSync(
+    join(directory, 'saved-run.json'),
+    JSON.stringify({
+      id: 'saved-run',
+      name: 'Saved run',
+      target: 'piggybank',
+      status: 'interrupted',
+      startedAt: new Date().toISOString(),
+      campaign: { version: 1 },
+      steps: [savedStep],
+    }),
+  );
+  const methods = [];
+  const fetchImpl = async (url, options = {}) => {
+    const parsed = new URL(url);
+    if (parsed.hostname === 'core.example')
+      return response({ org_id: orgId, user_id: userId });
+    if (parsed.hostname === 'id.example')
+      return response({ access_token: 'kora-service-token', expires_in: 300 });
+    methods.push(options.method ?? 'GET');
+    assert.equal(parsed.hostname, 'kora.example');
+    assert.equal(
+      parsed.pathname,
+      `/api/internal/capabilities/incidents/receipts/${prepared.body.trace_id}`,
+    );
+    return response({
+      incident: {
+        ...incident(prepared.body),
+        org_id: orgId,
+      },
+    });
+  };
+  const lab = createLab(
+    {
+      services: {
+        coreBackend: {
+          baseUrl: 'https://core.example',
+          auth: { bearerEnv: 'CORE_BEARER' },
+        },
+        koraOne: {
+          ...config,
+          baseUrl: 'https://kora.example',
+          auth: {
+            oauth: {
+              tokenUrl: 'https://id.example/token',
+              clientIdEnv: 'KORA_CLIENT_ID',
+              clientSecretEnv: 'KORA_CLIENT_SECRET',
+            },
+          },
+        },
+      },
+      targets: {
+        piggybank: {
+          type: 'http',
+          baseUrl: 'https://product.example',
+          qaOnly: true,
+          bindings: {
+            world: { child: { qa: true, context: { role: 'child' } } },
+          },
+          incidentContracts: { taskDetails: contract },
+        },
+      },
+    },
+    {
+      directory,
+      env: {
+        CORE_BEARER: 'core-service-token',
+        KORA_CLIENT_ID: 'conversation-roleplay-feet',
+        KORA_CLIENT_SECRET: 'kora-service-secret',
+        ROLEPLAY_REVISION: 'd'.repeat(40),
+      },
+      fetchImpl,
+    },
+  );
+
+  const reconciled = await lab.incidentReconciliation;
+  const restored = lab.store.read('saved-run');
+  lab.dispose();
+
+  assert.equal(
+    reconciled[0]?.status,
+    'incident_recorded',
+    JSON.stringify(reconciled),
+  );
+  assert.deepEqual(methods, ['GET']);
+  assert.equal(restored.steps[0].incident.status, 'incident_recorded');
+  assert.equal(restored.steps[0].incident.effectVerified, false);
+});
 test('a receipt for a different skill, API or evidence summary cannot release quarantine', async () => {
   for (const mismatch of [
+    { reporter_client_id: 'foreign-reporter' },
     { skill_id: 'foreign.skill' },
     { api_id: 'foreign.api' },
     { safe_context: { producer: 'other' } },
@@ -240,7 +371,13 @@ test('service readiness checks the real catalog and refuses missing canonical Ko
       koraOne: {
         ...config,
         baseUrlEnv: 'ONE_URL',
-        auth: { bearerEnv: 'ONE_TOKEN' },
+        auth: {
+          oauth: {
+            tokenUrl: 'https://id.example/token',
+            clientIdEnv: 'ONE_CLIENT_ID',
+            clientSecretEnv: 'ONE_CLIENT_SECRET',
+          },
+        },
       },
     },
   };
@@ -248,7 +385,8 @@ test('service readiness checks the real catalog and refuses missing canonical Ko
   const stack = createServiceStack(cfg, {
     env: {
       CORE_TOKEN: 'core-private',
-      ONE_TOKEN: 'one-private',
+      ONE_CLIENT_ID: 'conversation-roleplay-feet',
+      ONE_CLIENT_SECRET: 'one-private',
       ONE_URL: 'https://kora.example',
     },
     fetchImpl: async (url, options) => {
@@ -257,6 +395,8 @@ test('service readiness checks the real catalog and refuses missing canonical Ko
           org_id: '11111111-1111-4111-8111-111111111111',
           user_id: '22222222-2222-4222-8222-222222222222',
         });
+      if (new URL(url).hostname === 'id.example')
+        return response({ access_token: 'one-private', expires_in: 300 });
       assert.equal(new URL(url).pathname, '/api/internal/capabilities/catalog');
       assert.equal(options.headers.Authorization, 'Bearer one-private');
       assert.equal(
@@ -295,10 +435,14 @@ test('a foreign receipt stays quarantined and an unavailable readback never auth
   const receipt = await c.report(value);
   assert.equal(receipt.status, 'submission_unknown');
   const other = client(async () => response({ incidents: [] }));
-  assert.equal(
-    (await other.reconcile(value, receipt)).status,
-    'submission_unknown',
+  const missing = await other.reconcile(value, receipt);
+  assert.equal(missing.status, 'submission_unknown');
+  assert.equal(missing.reconciliationError, 'receipt_not_found');
+  const denied = await client(async () => response({}, 403)).reconcile(
+    value,
+    receipt,
   );
+  assert.equal(denied.reconciliationError, 'http_403');
 });
 test('a rejected incident is retained across restart without an unchanged POST retry', async () => {
   const value = input();
@@ -320,12 +464,31 @@ test('canonical identity failure stops before any control-plane POST', async () 
     },
     {
       getHeaders: async () => ({}),
+      getClientId: () => 'conversation-roleplay-feet',
       fetchImpl: async () => {
         throw Error('Must not call');
       },
     },
   );
   await assert.rejects(c.report(input()), /Foreign organization/);
+});
+test('a different OAuth client is rejected before any Kora One request', async () => {
+  let called = false;
+  const c = new KoraOneIncidentClient(
+    config,
+    { identity: async () => identity },
+    {
+      getHeaders: async () => ({ Authorization: 'Bearer wrong-client' }),
+      getClientId: () => 'basanti-service',
+      fetchImpl: async () => {
+        called = true;
+        throw Error('Must not call');
+      },
+    },
+  );
+
+  await assert.rejects(c.report(input()), /dedicated conversation-roleplay-feet/);
+  assert.equal(called, false);
 });
 test('an engine failure records an HAI incident without replay, hidden direct repair or promotion', async () => {
   let targetCalls = 0,

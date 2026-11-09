@@ -16,6 +16,7 @@ import {
   RESERVED_REPAIR_STATES,
 } from './clarifications.mjs';
 import { createServiceStack } from './services.mjs';
+import { createEffectProof } from './effect-proof.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const example = () =>
@@ -58,6 +59,8 @@ export function createLab(
 ) {
   const secrets = collectSecrets(config, env);
   if (env.ROLEPLAY_DEPLOY_TOKEN) secrets.push(env.ROLEPLAY_DEPLOY_TOKEN);
+  if (env.ROLEPLAY_EFFECT_PROOF_SIGNING_KEY)
+    secrets.push(env.ROLEPLAY_EFFECT_PROOF_SIGNING_KEY);
   const store = new RunStore(directory, { secrets });
   const releaseLease = store.acquireLease();
   try {
@@ -72,6 +75,57 @@ export function createLab(
     demo: { type: 'demo', label: 'Local simulator · no product traffic' },
     ...(config.targets ?? {}),
   };
+  const reconcileInterruptedIncidents = async () => {
+    const client = serviceStack.incidentClient;
+    if (client?.config?.enabled !== true) return [];
+    const results = [];
+    for (const run of store.list()) {
+      const target = targets[run.target];
+      if (!target || target.type === 'demo') continue;
+      const adapter = createAdapter(target, { env, fetchImpl });
+      for (const step of run.steps ?? []) {
+        if (step.incident?.status !== 'submission_unknown') continue;
+        const contract = target.incidentContracts?.[step.incidentContractId];
+        if (!contract) continue;
+        try {
+          const result = await client.reconcile(
+            {
+              contract,
+              step,
+              product: run.target,
+              platformRole: adapter.binding(step.worldId, step.actorId).context
+                ?.role,
+              runId: run.id,
+              scenarioId: step.scenarioId,
+              signal: AbortSignal.timeout(15000),
+              checkpoint: async (receipt) => {
+                step.incident = structuredClone(receipt);
+                store.save(run);
+              },
+            },
+            step.incident,
+          );
+          results.push({
+            runId: run.id,
+            scenarioId: step.scenarioId,
+            stepId: step.id,
+            status: result.status,
+          });
+        } catch (error) {
+          // A failed GET keeps the saved submission quarantined. Never POST here.
+          results.push({
+            runId: run.id,
+            scenarioId: step.scenarioId,
+            stepId: step.id,
+            status: 'submission_unknown',
+            reason: error.message,
+          });
+        }
+      }
+    }
+    return results;
+  };
+  const incidentReconciliation = reconcileInterruptedIncidents();
   const csrf = randomBytes(32).toString('hex');
   let planning = false;
   let launching = 0;
@@ -309,6 +363,24 @@ export function createLab(
             summary: run.summary,
           })),
         );
+      const proofMatch = url.pathname.match(
+        /^\/api\/runs\/([\w-]+)\/effect-proof$/,
+      );
+      if (req.method === 'POST' && proofMatch) {
+        const run = publicRun(proofMatch[1]);
+        assert(run, 'Unknown roleplay run');
+        const input = await body(req);
+        return json(
+          res,
+          200,
+          createEffectProof(run, {
+            proposalId: input.proposalId,
+            stepId: input.stepId,
+            revision: env.ROLEPLAY_REVISION,
+            signingKey: env.ROLEPLAY_EFFECT_PROOF_SIGNING_KEY,
+          }),
+        );
+      }
       if (req.method === 'POST' && url.pathname === '/api/repairs/preflight') {
         const campaign = validateCampaign(await body(req));
         assert(targets[campaign.target], 'Unknown configured target');
@@ -486,9 +558,10 @@ export function createLab(
   });
   server.on('close', () => {
     quiesce();
-    Promise.allSettled([...runs.values()].map((run) => run.completion)).then(
-      releaseLease,
-    );
+    Promise.allSettled([
+      incidentReconciliation,
+      ...[...runs.values()].map((run) => run.completion),
+    ]).then(releaseLease);
   });
   return {
     server,
@@ -497,6 +570,7 @@ export function createLab(
     launch,
     publicRun,
     services: serviceStack,
+    incidentReconciliation,
     quiesce,
     dispose: releaseLease,
   };

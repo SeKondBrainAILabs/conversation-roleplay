@@ -44,6 +44,13 @@ export class ServiceCredentials {
     this.fetchImpl = fetchImpl;
     this.clock = clock;
   }
+  clientId() {
+    assert(
+      !this.config.bearerEnv && this.config.oauth,
+      'Kora One incidents require a named OAuth client identity',
+    );
+    return setting(this.config.oauth, 'clientId', this.env);
+  }
   async token(signal) {
     if (this.config.bearerEnv)
       return setting(this.config, 'bearer', this.env).replace(/^Bearer /i, '');
@@ -241,6 +248,7 @@ export function createServiceStack(config = {}, options = {}) {
     koraOne
       ? {
           ...koraOne,
+          sourceRevision: env.ROLEPLAY_REVISION ?? koraOne.sourceRevision,
           baseUrl: koraOne.baseUrlEnv
             ? env[koraOne.baseUrlEnv]
             : koraOne.baseUrl,
@@ -250,7 +258,10 @@ export function createServiceStack(config = {}, options = {}) {
     {
       ...options,
       ...(incidentCredentials
-        ? { getHeaders: (signal) => incidentCredentials.headers(signal) }
+        ? {
+            getHeaders: (signal) => incidentCredentials.headers(signal),
+            getClientId: () => incidentCredentials.clientId(),
+          }
         : {}),
     },
   );
