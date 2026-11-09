@@ -36,6 +36,7 @@
     "koraOne": {
       "enabled": false,
       "contractVerified": false,
+      "reporterClientId": "conversation-roleplay-feet",
       "probeProduct": "piggybank",
       "baseUrlEnv": "ROLEPLAY_KORA_ONE_BASE_URL",
       "auth": {
