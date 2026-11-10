@@ -9,6 +9,7 @@ import {
   incidentEligible,
   validateIncidentContract,
   CampaignRun,
+  HttpConversationAdapter,
   createLab,
 } from '../src/index.mjs';
 import { createServiceStack } from '../src/services.mjs';
@@ -129,6 +130,63 @@ test('the submitted trace satisfies the pinned Kora One HTTP contract', async ()
     return response({ created: true, incident: incident(body) }, 202);
   });
   assert.equal((await c.report(value)).status, 'incident_recorded');
+});
+test('a shared reporter keeps each product revision instead of substituting its own build', async () => {
+  const seen = [];
+  const c = client(async (_url, options) => {
+    const body = JSON.parse(options.body);
+    seen.push(body.safe_context.source_revision);
+    return response({ incident: incident(body) }, 202);
+  });
+  for (const revision of ['e'.repeat(40), 'f'.repeat(40)]) {
+    const value = { ...input(), runId: revision, sourceRevision: revision };
+    const receipt = await c.report(value);
+    assert.equal(receipt.status, 'incident_recorded');
+    assert.equal(receipt.sourceRevision, revision);
+  }
+  assert.deepEqual(seen, ['e'.repeat(40), 'f'.repeat(40)]);
+});
+test('a missing product revision cannot fall back to the reporter build before POST', () => {
+  const c = client(async () => {
+    throw Error('No request allowed');
+  });
+  const value = input();
+  delete value.sourceRevision;
+  assert.throws(() => c.report(value), /exact tested source revision/);
+});
+test('an existing receipt cannot be attributed to a changed product revision or replayed', async () => {
+  let requests = 0;
+  const c = client(async (_url, options) => {
+    requests++;
+    return response({ incident: incident(JSON.parse(options.body)) }, 202);
+  });
+  const value = input();
+  value.step.incident = await c.report(value);
+  value.sourceRevision = 'e'.repeat(40);
+  assert.throws(() => c.report(value), /existing incident/);
+  delete value.step.incident;
+  await assert.rejects(c.report(value), /existing incident/);
+  assert.equal(requests, 1);
+});
+test('GET-only reconciliation uses the original product revision after configuration changes', async () => {
+  const value = { ...input(), sourceRevision: 'e'.repeat(40) };
+  const expected = capabilityIncident(value);
+  const methods = [];
+  const c = client(async (_url, options) => {
+    methods.push(options.method ?? 'GET');
+    return response({ incident: incident(expected.body) });
+  });
+  const receipt = {
+    status: 'submission_unknown',
+    fingerprint: expected.fingerprint,
+    sourceRevision: value.sourceRevision,
+  };
+  value.sourceRevision = 'f'.repeat(40);
+  assert.equal((await c.reconcile(value, receipt)).status, 'incident_recorded');
+  assert.deepEqual(methods, ['GET']);
+  delete receipt.sourceRevision;
+  await assert.rejects(c.reconcile(value, receipt), /exact tested source revision/);
+  assert.deepEqual(methods, ['GET']);
 });
 test('correct permission denials, evaluator errors, invalid actor requests and unknown outcomes do not become product repairs', async () => {
   for (const bad of [
@@ -515,16 +573,18 @@ test('an engine failure records an HAI incident without replay, hidden direct re
       },
     ],
   };
-  const run = new CampaignRun(campaign, {
-    adapter: {
-      kind: 'piggybank',
-      config: { incidentContracts: { taskDetails: contract } },
-      binding: () => ({ context: { role: 'child' } }),
-      send: async () => {
-        targetCalls++;
-        return { text: 'Task name only', status: 200 };
-      },
+  const adapter = {
+    kind: 'piggybank',
+    sourceRevision: 'e'.repeat(40),
+    config: { incidentContracts: { taskDetails: contract } },
+    binding: () => ({ context: { role: 'child' } }),
+    send: async () => {
+      targetCalls++;
+      return { text: 'Task name only', status: 200 };
     },
+  };
+  const run = new CampaignRun(campaign, {
+    adapter,
     actorModel: {
       kind: 'llm',
       complete: async (p) =>
@@ -537,6 +597,7 @@ test('an engine failure records an HAI incident without replay, hidden direct re
       config,
       report: async (i) => {
         reported++;
+        assert.equal(i.sourceRevision, 'e'.repeat(40));
         const r = {
           status: 'incident_recorded',
           effectVerified: false,
@@ -547,12 +608,46 @@ test('an engine failure records an HAI incident without replay, hidden direct re
       },
     },
   });
+  // A subsequent host configuration change cannot relabel this saved run.
+  adapter.sourceRevision = 'f'.repeat(40);
   const result = await run.start();
+  assert.equal(result.targetSourceRevision, 'e'.repeat(40));
   assert.equal(targetCalls, 1);
   assert.equal(reported, 1);
   assert.equal(result.steps[0].status, 'failed');
   assert.equal(result.steps[0].incident.effectVerified, false);
   assert.equal(result.qualified, false);
+});
+test('HTTP adapters resolve operator-owned target revisions without a lab-build fallback', () => {
+  const options = {
+    env: {
+      PRODUCT_REVISION: 'e'.repeat(40),
+      ROLEPLAY_REVISION: 'd'.repeat(40),
+    },
+  };
+  const base = { baseUrl: 'https://product.example' };
+  assert.equal(
+    new HttpConversationAdapter(
+      { ...base, sourceRevisionEnv: 'PRODUCT_REVISION' }, options,
+    ).sourceRevision,
+    'e'.repeat(40),
+  );
+  assert.equal(
+    new HttpConversationAdapter(
+      { ...base, sourceRevision: 'f'.repeat(40) }, options,
+    ).sourceRevision,
+    'f'.repeat(40),
+  );
+  for (const revisionConfig of [
+    { sourceRevisionEnv: 'MISSING' },
+    { sourceRevision: 'main' },
+    { sourceRevision: 'f'.repeat(40), sourceRevisionEnv: 'PRODUCT_REVISION' },
+  ]) {
+    assert.throws(
+      () => new HttpConversationAdapter({ ...base, ...revisionConfig }, options),
+      /one exact tested product source revision/,
+    );
+  }
 });
 test('HAI-led campaign preflight stops before target traffic when the registry connection is disabled', () => {
   const campaign = {
@@ -588,4 +683,19 @@ test('HAI-led campaign preflight stops before target traffic when the registry c
       }),
     /incident service enabled/,
   );
+  for (const sourceRevision of [undefined, 'main', 'too-short']) {
+    assert.throws(
+      () => new CampaignRun(campaign, {
+        adapter: {
+          kind: 'piggybank',
+          sourceRevision,
+          config: { incidentContracts: { taskDetails: contract } },
+          binding: () => ({ context: { role: 'child' } }),
+        },
+        actorModel: { kind: 'llm' },
+        incidentClient: { config },
+      }),
+      /exact tested product source revision/,
+    );
+  }
 });

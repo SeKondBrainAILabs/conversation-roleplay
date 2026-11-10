@@ -173,6 +173,11 @@ export function preflightIncidentContracts(campaign, adapter, client) {
             adapter.binding(scenario.worldId, step.actorId).context?.role,
         'Incident contract does not match the bound platform actor',
       );
+      assert(
+        typeof adapter.sourceRevision === 'string' &&
+          /^[a-f0-9]{40,64}$/.test(adapter.sourceRevision),
+        'HAI-led campaigns need the exact tested product source revision',
+      );
     }
 }
 
@@ -194,10 +199,7 @@ export class KoraOneIncidentClient {
       return Promise.resolve({ status: 'disabled', effectVerified: false });
     if (!incidentEligible(input.step))
       return Promise.resolve({ status: 'not_eligible', effectVerified: false });
-    const prepared = capabilityIncident({
-      ...input,
-      sourceRevision: this.config.sourceRevision,
-    });
+    const prepared = capabilityIncident(input);
     const previous = input.step.incident;
     if (
       [
@@ -208,14 +210,21 @@ export class KoraOneIncidentClient {
       ].includes(previous?.status)
     ) {
       assert(
-        previous.fingerprint === prepared.fingerprint,
+        previous.fingerprint === prepared.fingerprint &&
+          previous.sourceRevision === prepared.body.safe_context.source_revision,
         'Review the existing incident before changing its repair contract',
       );
       return Promise.resolve(structuredClone(previous));
     }
     if (!this.attempts.has(prepared.fingerprint))
       this.attempts.set(prepared.fingerprint, this.submit(input, prepared));
-    return this.attempts.get(prepared.fingerprint).then(structuredClone);
+    return this.attempts.get(prepared.fingerprint).then((receipt) => {
+      assert(
+        receipt.sourceRevision === prepared.body.safe_context.source_revision,
+        'Review the existing incident before changing its product revision',
+      );
+      return structuredClone(receipt);
+    });
   }
   async transport(signal) {
     assert(
@@ -283,7 +292,7 @@ export class KoraOneIncidentClient {
   async reconcile(input, receipt) {
     const prepared = capabilityIncident({
       ...input,
-      sourceRevision: receipt.sourceRevision ?? this.config.sourceRevision,
+      sourceRevision: receipt.sourceRevision,
     });
     assert(
       receipt.fingerprint === prepared.fingerprint,
@@ -366,7 +375,7 @@ export class KoraOneIncidentClient {
       at: now(),
       repairLead: 'hai',
       effectVerified: false,
-      sourceRevision: this.config.sourceRevision,
+      sourceRevision: prepared.body.safe_context.source_revision,
     };
     await input.checkpoint(structuredClone(receipt));
     try {

@@ -248,7 +248,6 @@ export function createServiceStack(config = {}, options = {}) {
     koraOne
       ? {
           ...koraOne,
-          sourceRevision: env.ROLEPLAY_REVISION ?? koraOne.sourceRevision,
           baseUrl: koraOne.baseUrlEnv
             ? env[koraOne.baseUrlEnv]
             : koraOne.baseUrl,
