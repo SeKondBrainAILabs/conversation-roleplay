@@ -376,7 +376,6 @@ export function createLab(
           createEffectProof(run, {
             proposalId: input.proposalId,
             stepId: input.stepId,
-            revision: env.ROLEPLAY_REVISION,
             signingKey: env.ROLEPLAY_EFFECT_PROOF_SIGNING_KEY,
           }),
         );

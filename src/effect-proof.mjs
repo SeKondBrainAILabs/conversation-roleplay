@@ -7,8 +7,9 @@ const digest = (value) =>
 
 export function createEffectProof(
   run,
-  { proposalId, stepId, revision, signingKey, clock = () => new Date() },
+  { proposalId, stepId, signingKey, clock = () => new Date() },
 ) {
+  const revision = run?.targetSourceRevision;
   assert(
     /^repair_[a-f0-9]{32}$/.test(proposalId),
     'Effect proof needs one product-repair proposal',
@@ -17,7 +18,10 @@ export function createEffectProof(
     ['basanti', 'piggybank'].includes(run?.target),
     'Effect proof needs a qualified product run',
   );
-  assert(/^[0-9a-f]{40,64}$/.test(revision), 'Effect proof needs the running revision');
+  assert(
+    typeof revision === 'string' && /^[0-9a-f]{40,64}$/.test(revision),
+    'Effect proof needs the saved tested product source revision',
+  );
   assert(signingKey?.length >= 32, 'Effect-proof signing is not configured');
   assert(
     run?.status === 'completed' && run.qualified === true,

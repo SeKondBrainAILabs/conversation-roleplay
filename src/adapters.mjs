@@ -68,6 +68,18 @@ export class HttpConversationAdapter {
     this.env = env;
     this.fetchImpl = fetchImpl;
     this.kind = config.type ?? 'http';
+    // This is the tested product's commit, independent of the lab's own build.
+    this.sourceRevision = config.sourceRevisionEnv
+      ? env[config.sourceRevisionEnv]
+      : config.sourceRevision;
+    if (config.sourceRevision !== undefined || config.sourceRevisionEnv !== undefined) {
+      assert(
+        !(config.sourceRevision !== undefined && config.sourceRevisionEnv !== undefined) &&
+          typeof this.sourceRevision === 'string' &&
+          /^[a-f0-9]{40,64}$/.test(this.sourceRevision),
+        'Configure one exact tested product source revision',
+      );
+    }
     this.identities = new Map();
   }
   manifest() {

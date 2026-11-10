@@ -244,6 +244,19 @@ Enable `services.koraOne` only after reviewing the deployed API and granting the
 
 The roleplay client may read only its configured product catalogs, submit typed failed evaluations, and read back only the exact receipt correlated to its own client, organization and trace. Incident listing, resolution, catalog publication and product execution remain unavailable. Adding its client ID to a general allowlist alone is insufficient; the signed organization and QA product policy must also match. Contract/unit tests do not establish that these service permissions or the provider deployment are available.
 
+Set `targets.piggybank.sourceRevision` to the exact released **PiggyBank** Git
+commit verified against the running product, or use `sourceRevisionEnv` to name
+a host environment variable containing that commit. Configure Basanti's tested
+commit separately under its target. `ROLEPLAY_REVISION` identifies the lab build
+and cannot supply a product revision. An incident-enabled campaign refuses to
+start without a valid target commit. Keep the target deployment unchanged for
+the campaign and independently verify its source before and after the run.
+
+The run snapshots this target revision before any conversations. Both incident
+receipts and signed effect proofs retain it after a lab restart or configuration
+change. Old archives without a saved target revision cannot issue an effect
+proof; do not fill in or relabel their evidence after the fact.
+
 Configure an operator-owned contract under `targets.piggybank.incidentContracts`, for example:
 
 ```json

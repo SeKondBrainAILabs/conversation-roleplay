@@ -57,6 +57,7 @@ export class CampaignRun extends EventEmitter {
       id: uuid(),
       name: this.campaign.name,
       target: this.campaign.target,
+      targetSourceRevision: adapter.sourceRevision ?? null,
       status: 'preparing',
       startedAt: now(),
       modelCalls: 0,
@@ -619,6 +620,7 @@ export class CampaignRun extends EventEmitter {
           contract,
           step,
           product: this.campaign.target,
+          sourceRevision: this.state.targetSourceRevision,
           platformRole: this.adapter.binding(step.worldId, step.actorId).context
             .role,
           runId: this.state.id,
