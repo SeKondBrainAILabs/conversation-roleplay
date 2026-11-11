@@ -5,15 +5,6 @@ import { assert, isObject, jsonRequest, now } from './util.mjs';
 
 const ids = (value) =>
   typeof value === 'string' && /^[a-z][a-z0-9_.-]{0,127}$/.test(value);
-const types = new Set([
-  'unmapped_case',
-  'unavailable_skill',
-  'api_contract_missing',
-  'api_execution_failed',
-  'schema_invalid',
-  'adapter_failed',
-  'eval_failed',
-]);
 export function validateIncidentContract(value) {
   assert(
     isObject(value) && ['piggybank', 'basanti'].includes(value.product),
@@ -43,8 +34,11 @@ export function validateIncidentContract(value) {
     'Incident needs configured platform and registry roles',
   );
   assert(
-    types.has(value.incidentType) &&
-      ids(value.reasonCode) &&
+    value.incidentType === 'eval_failed',
+    'QA reporters may submit evaluated failures only',
+  );
+  assert(
+    ids(value.reasonCode) &&
       value.reasonCode.length <= 96,
     'Invalid incident classification',
   );

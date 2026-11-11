@@ -37,6 +37,14 @@ export class CampaignRun extends EventEmitter {
     this.judgeModel = judgeModel;
     this.repairAdapter = repairAdapter;
     this.incidentClient = incidentClient;
+    // Validate the entire graph before an earlier step can spend inference or act.
+    for (const scenario of this.campaign.scenarios)
+      for (const step of scenario.steps)
+        adapter.assertStep?.({
+          worldId: scenario.worldId,
+          actor: this.campaign.roles.find((role) => role.id === step.actorId),
+          step,
+        });
     preflightIncidentContracts(this.campaign, adapter, incidentClient);
     const repairCheck = preflightCampaignRepairs(
       this.campaign,
