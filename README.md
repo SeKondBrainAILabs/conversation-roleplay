@@ -242,6 +242,14 @@ Use Kora One's shared capability map rather than creating another registry in th
 
 Enable `services.koraOne` only after reviewing the deployed API and granting the dedicated `conversation-roleplay-feet` OIDC service client access. Kora One requires an exact signed organization delegation, the `kora.internal` role on `kora-api`, and an explicit QA product grant. Do not borrow PiggyBank, Basanti or HAI credentials, mint a local JWT, or substitute a static key. The organization header comes from independently authenticated Core Backend identity, never an actor or model. The example configuration leaves this connection disabled. When enabled, its catalog check must pass service readiness even if it is omitted from `services.required`.
 
+The dedicated QA reporter submits only `eval_failed` incidents, matching Kora
+One's QA endpoint and HAI's reviewed consumer contract. Describe an unmapped
+capability with an accurate reason code; do not invent a graph reference or use
+an incompatible incident type. Campaign startup validates all configured actor,
+observer and instruction bindings before the first model or product turn, so a
+malformed later step cannot allow earlier steps to run first. These checks do
+not establish a working repair or replace independent product-effect proof.
+
 The roleplay client may read only its configured product catalogs, submit typed failed evaluations, and read back only the exact receipt correlated to its own client, organization and trace. Incident listing, resolution, catalog publication and product execution remain unavailable. Adding its client ID to a general allowlist alone is insufficient; the signed organization and QA product policy must also match. Contract/unit tests do not establish that these service permissions or the provider deployment are available.
 
 Set `targets.piggybank.sourceRevision` to the exact released **PiggyBank** Git
