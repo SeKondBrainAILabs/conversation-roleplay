@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { HttpConversationAdapter, CampaignRun } from '../src/index.mjs';
+import { HttpConversationAdapter, CampaignRun, JsonChatModel } from '../src/index.mjs';
 import { renderBasantiReply, matchesLocalDateTime } from '../src/basanti.mjs';
 
 const actor = { id: 'cook', name: 'Cook QA', description: 'Synthetic household cook', persona: { style: 'Concise' } };
@@ -155,4 +155,63 @@ test('contradictory or missing native household clock is an unverified test setu
     assert.equal(result.steps[0].repair, undefined);
     assert.equal(result.steps[0].incident, undefined);
   }
+});
+
+test('verified semantic and saved-state success ends without a redundant actor call or product replay', async () => {
+  const { adapter, calls } = fixture();
+  let actorCalls = 0;
+  const model = { kind: 'test', complete: async purpose => {
+    if (purpose === 'actor') {
+      actorCalls++;
+      if (actorCalls > 1) throw new Error('A redundant finishing call returned invalid JSON');
+      return { message: 'Please show the reviewed dinner', done: false };
+    }
+    return { verdict: 'pass', goalComplete: true, category: 'none', reason: 'Goal and independent state agree', evidence: [] };
+  } };
+  const run = new CampaignRun({ version: 1, name: 'Settled outcome', target: 'basanti', roles: [actor],
+    scenarios: [{ id: 'dinner', title: 'Dinner', worldId: 'house', steps: [{ ...step, effect: 'write', maxTurns: 4 }] }],
+  }, { adapter, actorModel: model });
+  const result = await run.start();
+  assert.equal(result.steps[0].status, 'passed');
+  assert.equal(result.steps[0].verification.status, 'passed');
+  assert.equal(result.steps[0].transcript.length, 2);
+  assert.equal(actorCalls, 1);
+  assert.equal(calls.filter(call => call.options.method === 'POST').length, 1);
+  assert.equal(result.modelCalls, 2);
+});
+
+test('fluent success cannot stop necessary follow-up when the required observer fails or is unavailable', async () => {
+  for (const observerStatus of ['failed', 'unavailable']) {
+    const { adapter, calls } = fixture({ savedDate: '2026-11-16T15:00:00Z' });
+    if (observerStatus === 'unavailable') adapter.verify = async () => ({ status: 'unavailable', checks: [] });
+    let actorCalls = 0;
+    const model = { kind: 'test', complete: async purpose => {
+      if (purpose === 'actor') {
+        actorCalls++;
+        assert.ok(actorCalls <= 2, 'Turn limit must not trigger an extra finishing call');
+        return { message: 'Check the dinner date again without creating another dinner', done: false };
+      }
+      return { verdict: 'pass', goalComplete: true, category: 'none', reason: 'Unreliable semantic opinion', evidence: [] };
+    } };
+    const run = new CampaignRun({ version: 1, name: 'Required observer', target: 'basanti', roles: [actor],
+      scenarios: [{ id: 'dinner', title: 'Dinner', worldId: 'house', steps: [{ ...step, maxTurns: 2 }] }],
+    }, { adapter, actorModel: model });
+    const result = await run.start();
+    assert.equal(result.steps[0].status, observerStatus === 'failed' ? 'failed' : 'unverified');
+    assert.equal(actorCalls, 2);
+    assert.equal(calls.filter(call => call.options.method === 'POST').length, 2);
+    assert.equal(result.qualified, false);
+  }
+});
+
+test('actual actor transport grounds approval in the human role and keeps review-only scope', async () => {
+  const model = new JsonChatModel({ url: 'https://model.example', model: 'test' });
+  const request = await model.transport('actor', {});
+  const system = request.body.messages[0].content;
+  assert.match(system, /human account holder/);
+  assert.match(system, /do not ask whether you should execute/);
+  assert.match(system, /review-only goal ends/);
+  const judge = await model.transport('judge', {});
+  assert.match(judge.body.messages[0].content, /pending proposal with no saved changes is complete/);
+  assert.match(judge.body.messages[0].content, /Do not invent extra required fields/);
 });

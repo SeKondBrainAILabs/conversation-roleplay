@@ -397,7 +397,7 @@ export class CampaignRun extends EventEmitter {
         };
       } else {
         let lastJudgment;
-        for (let turn = 0; turn <= step.maxTurns; turn++) {
+        for (let turn = 0; turn < step.maxTurns; turn++) {
           await this.waitWhilePaused();
           this.activity(step, 'composing');
           const action = await this.model(this.actorModel, 'actor', {
@@ -441,7 +441,6 @@ export class CampaignRun extends EventEmitter {
             );
           }
           if (action.done && step.transcript.length) break;
-          if (turn === step.maxTurns) break;
           assert(
             action.message.trim(),
             'Actor must send a message or finish an existing conversation',
@@ -552,6 +551,16 @@ export class CampaignRun extends EventEmitter {
             step.instructionResults.some((item) =>
               ['failed', 'invalid_request'].includes(item.status),
             )
+          )
+            break;
+          // Independent goal and effect evidence finishes the step. Asking the
+          // actor to finish again can invalidate a verified outcome or replay it.
+          if (
+            lastJudgment.verdict === 'pass' &&
+            lastJudgment.goalComplete &&
+            step.instructionResults.every((item) => item.status === 'passed') &&
+            (!(step.effect === 'write' || step.verifierId || step.exports) ||
+              step.verification?.status === 'passed')
           )
             break;
         }
