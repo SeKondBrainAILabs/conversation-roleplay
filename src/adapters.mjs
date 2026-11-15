@@ -67,6 +67,12 @@ function check(assertion, evidence, context) {
 export class HttpConversationAdapter {
   constructor(config, { env = process.env, fetchImpl } = {}) {
     assert(config?.baseUrl, 'Target needs a baseUrl');
+    assert(
+      config.responseTextBlocksPath === undefined ||
+        (typeof config.responseTextBlocksPath === 'string' &&
+          config.responseTextBlocksPath.length > 0 && config.responsePaths === undefined),
+      'Configure one explicit text-block path or fallback response paths',
+    );
     this.config = config;
     this.env = env;
     this.fetchImpl = fetchImpl;
@@ -342,11 +348,21 @@ export class HttpConversationAdapter {
               'result.data.json.text',
             ]
           : ['response']);
-    const text = this.kind === 'basanti' && this.config.responsePaths === undefined
+    let blockText;
+    if (this.config.responseTextBlocksPath !== undefined) {
+      const blocks = at(data, this.config.responseTextBlocksPath);
+      assert(
+        Array.isArray(blocks) && blocks.length > 0 &&
+          blocks.every((block) => block?.type === 'text' && typeof block.text === 'string'),
+        'Target JSON did not contain the complete native text-block response',
+      );
+      blockText = blocks.map((block) => block.text).join('\n');
+    }
+    const text = blockText ?? (this.kind === 'basanti' && this.config.responsePaths === undefined
       ? renderBasantiReply(at(data, 'result.data.json.reply'))
       : responsePaths
       .map((path) => at(data, path))
-      .find((value) => typeof value === 'string');
+      .find((value) => typeof value === 'string'));
     assert(
       text !== undefined,
       'Target JSON did not contain a configured text response',
@@ -354,8 +370,11 @@ export class HttpConversationAdapter {
     return {
       text,
       status,
+      ...(this.config.responseTextBlocksPath !== undefined ? {
+        surface: 'native-text-blocks', trace: data,
+      } : {}),
       ...(this.kind === 'basanti' ? {
-        surface: this.config.responsePaths === undefined ? 'basanti-shared-channel' : 'custom-response-paths',
+        surface: this.config.responseTextBlocksPath !== undefined ? 'native-text-blocks' : this.config.responsePaths === undefined ? 'basanti-shared-channel' : 'custom-response-paths',
         requestContext: { date: context.actor.date, timezone: context.actor.timezone, householdId: context.actor.householdId },
         productContext: {
           date: at(data, 'result.data.json.reply.date'),
