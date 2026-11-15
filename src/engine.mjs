@@ -494,6 +494,19 @@ export class CampaignRun extends EventEmitter {
                 'Independent observer unavailable; success cannot be established',
             };
           }
+          if (response.clockVerification && response.clockVerification.status !== 'passed') {
+            // The action has settled and its readback is retained. A stale test fixture
+            // is not a product defect, a model verdict, or permission for another turn.
+            step.errorSource = 'test_setup';
+            step.error = response.clockVerification.reason;
+            step.judgment = {
+              verdict: 'uncertain', goalComplete: false, category: 'other',
+              reason: step.error, evidence: ['response.clockVerification'],
+              source: 'fixture-clock-check',
+            };
+            this.record('step.fixture_clock_mismatch', ref);
+            break;
+          }
           this.activity(step, 'evaluating');
           lastJudgment = await this.model(this.judgeModel, 'judge', {
             actor,
@@ -549,7 +562,8 @@ export class CampaignRun extends EventEmitter {
         step.effect === 'write' ||
         Boolean(step.verifierId) ||
         Boolean(step.exports);
-      if (
+      if (step.errorSource === 'test_setup') step.status = 'unverified';
+      else if (
         step.judgment.verdict === 'fail' ||
         step.verification?.status === 'failed' ||
         step.instructionResults?.some((item) =>

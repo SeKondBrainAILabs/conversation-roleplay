@@ -53,6 +53,9 @@ export class JsonChatModel {
     return result;
   }
   async transport(purpose, payload) {
+    const temporalContract = purpose === 'judge'
+      ? '\nFor relative-day or time goals, use the native response.productContext.date and timezone as the household reference, never the runner clock. response.requestContext records only the submitted fixture clock, not server authority. A missing or mismatched native clock is a test setup problem, not evidence of a product date bug. Check both the local calendar date and exact time in native traces and observer evidence. Correct relative durations with a wrong date are not completion. A failed deterministic date/time, target, owner, state or cardinality check cannot be overridden by fluent text. Distinguish a safe refusal from useful completion; a generic unsupported reply is not proof of a clear permission or photo instruction. Native trace fields hidden by the tested rendering surface do not count as visible answers to the actor.'
+      : '';
     const compoundContract =
       purpose === 'judge' && payload.instructions?.length
         ? '\nThis is a compound evaluation. The instructions array in the response is MANDATORY, not optional. Return every listed instruction exactly once. Required response shape: ' +
@@ -81,7 +84,7 @@ export class JsonChatModel {
       body: {
         model: this.config.model,
         messages: [
-          { role: 'system', content: prompts[purpose] + compoundContract },
+          { role: 'system', content: prompts[purpose] + compoundContract + temporalContract },
           { role: 'user', content: JSON.stringify(payload) },
         ],
         temperature: purpose === 'judge' ? 0 : 0.6,
