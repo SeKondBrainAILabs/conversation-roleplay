@@ -397,7 +397,7 @@ export class CampaignRun extends EventEmitter {
         };
       } else {
         let lastJudgment;
-        for (let turn = 0; turn <= step.maxTurns; turn++) {
+        for (let turn = 0; turn < step.maxTurns; turn++) {
           await this.waitWhilePaused();
           this.activity(step, 'composing');
           const action = await this.model(this.actorModel, 'actor', {
@@ -441,7 +441,6 @@ export class CampaignRun extends EventEmitter {
             );
           }
           if (action.done && step.transcript.length) break;
-          if (turn === step.maxTurns) break;
           assert(
             action.message.trim(),
             'Actor must send a message or finish an existing conversation',
@@ -494,6 +493,19 @@ export class CampaignRun extends EventEmitter {
                 'Independent observer unavailable; success cannot be established',
             };
           }
+          if (response.clockVerification && response.clockVerification.status !== 'passed') {
+            // The action has settled and its readback is retained. A stale test fixture
+            // is not a product defect, a model verdict, or permission for another turn.
+            step.errorSource = 'test_setup';
+            step.error = response.clockVerification.reason;
+            step.judgment = {
+              verdict: 'uncertain', goalComplete: false, category: 'other',
+              reason: step.error, evidence: ['response.clockVerification'],
+              source: 'fixture-clock-check',
+            };
+            this.record('step.fixture_clock_mismatch', ref);
+            break;
+          }
           this.activity(step, 'evaluating');
           lastJudgment = await this.model(this.judgeModel, 'judge', {
             actor,
@@ -541,6 +553,16 @@ export class CampaignRun extends EventEmitter {
             )
           )
             break;
+          // Independent goal and effect evidence finishes the step. Asking the
+          // actor to finish again can invalidate a verified outcome or replay it.
+          if (
+            lastJudgment.verdict === 'pass' &&
+            lastJudgment.goalComplete &&
+            step.instructionResults.every((item) => item.status === 'passed') &&
+            (!(step.effect === 'write' || step.verifierId || step.exports) ||
+              step.verification?.status === 'passed')
+          )
+            break;
         }
         if (!step.judgment)
           throw new Error('No completed target turn was evaluated');
@@ -549,7 +571,8 @@ export class CampaignRun extends EventEmitter {
         step.effect === 'write' ||
         Boolean(step.verifierId) ||
         Boolean(step.exports);
-      if (
+      if (step.errorSource === 'test_setup') step.status = 'unverified';
+      else if (
         step.judgment.verdict === 'fail' ||
         step.verification?.status === 'failed' ||
         step.instructionResults?.some((item) =>

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "product": "Core Backend WhatsApp/UCG communications ingress",
+  "sourceCommit": "64c4ae4ec8ed6b1caf9ab22b0a0061f4fc789588",
+  "test": "tests/integration/comms/test_comms_webhook_router.py::test_r4_the_signed_webhook_holds_a_two_second_p99_at_fifty_a_second",
+  "measurement": {
+    "requests": 500,
+    "arrival_rate_per_second": 50,
+    "duration_seconds": 10,
+    "p99_seconds": 0.058766665984876454,
+    "max_seconds": 0.07534524996299297,
+    "median_seconds": 0.032138042035512626,
+    "budget_seconds": 2.0
+  },
+  "outcome": {
+    "pytestPassed": 1,
+    "pytestDurationSeconds": 11.97,
+    "http200Count": 500,
+    "nativePersistedDeliveries": 500
+  },
+  "scope": [
+    "In-process ASGI endpoint with fresh native PostgreSQL.",
+    "Synthetic signing keystore and rate-counter fixture.",
+    "Agent boundary asserted unreachable; no actual provider/agent dispatch."
+  ],
+  "limits": [
+    "This is local ingress qualification, not production end-to-end latency proof.",
+    "Separately reported hosted shared-runner p99=9.937s and parent-run p99=14.228s remained failed under their different environment; this local result does not overwrite them."
+  ],
+  "rawMeasurementSha256": "2eb0e7c5a848b999e21f952912fd9640e3f708f88e6e8a9739fb513bf428b01d",
+  "rawResultSha256": "b4a9f6bf5ca413b531e20394e0c1d510918fcf2067750fa61a1abe7b318f1a4d"
+}

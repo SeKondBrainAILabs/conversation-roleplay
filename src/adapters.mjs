@@ -11,6 +11,7 @@ import {
 } from './util.mjs';
 import { isDeepStrictEqual } from 'node:util';
 import { createHash } from 'node:crypto';
+import { renderBasantiReply, assertHouseholdClock, assertLocalDateTime, matchesLocalDateTime, checkBasantiClock } from './basanti.mjs';
 
 function partialMatch(value, expected) {
   return isObject(expected)
@@ -25,6 +26,8 @@ function check(assertion, evidence, context) {
   const actual = at(evidence, assertion.path);
   const expected = bind(assertion.expected, context);
   switch (assertion.op) {
+    case 'localDateTime':
+      return matchesLocalDateTime(actual, expected);
     case 'exists':
       return actual !== undefined && actual !== null;
     case 'eq':
@@ -64,6 +67,12 @@ function check(assertion, evidence, context) {
 export class HttpConversationAdapter {
   constructor(config, { env = process.env, fetchImpl } = {}) {
     assert(config?.baseUrl, 'Target needs a baseUrl');
+    assert(
+      config.responseTextBlocksPath === undefined ||
+        (typeof config.responseTextBlocksPath === 'string' &&
+          config.responseTextBlocksPath.length > 0 && config.responsePaths === undefined),
+      'Configure one explicit text-block path or fallback response paths',
+    );
     this.config = config;
     this.env = env;
     this.fetchImpl = fetchImpl;
@@ -150,6 +159,7 @@ export class HttpConversationAdapter {
   }
   assertStep(input) {
     this.binding(input.worldId, input.actor.id);
+    if (this.kind === 'basanti') assertHouseholdClock(this.context(input).actor);
     const hook = this.config.verifiers?.[input.step.verifierId];
     if (input.step.verifierId || input.step.effect === 'write') {
       assert(
@@ -187,9 +197,12 @@ export class HttpConversationAdapter {
               'length',
               'unchanged',
               'matches',
+              'localDateTime',
             ].includes(rule.op),
           'Invalid observer assertion',
         );
+        if (rule.op === 'localDateTime')
+          assertLocalDateTime(bind(rule.expected, this.context(input)));
         assert(
           rule.op !== 'matches' ||
             (isObject(rule.expected) &&
@@ -276,6 +289,7 @@ export class HttpConversationAdapter {
     } else await this.identities.get(key);
   }
   async send(input, { signal } = {}) {
+    if (this.kind === 'basanti') assertHouseholdClock(this.context(input).actor);
     await this.guard(input, signal);
     const context = this.context(input);
     let hook = this.config.chat;
@@ -334,9 +348,21 @@ export class HttpConversationAdapter {
               'result.data.json.text',
             ]
           : ['response']);
-    const text = responsePaths
+    let blockText;
+    if (this.config.responseTextBlocksPath !== undefined) {
+      const blocks = at(data, this.config.responseTextBlocksPath);
+      assert(
+        Array.isArray(blocks) && blocks.length > 0 &&
+          blocks.every((block) => block?.type === 'text' && typeof block.text === 'string'),
+        'Target JSON did not contain the complete native text-block response',
+      );
+      blockText = blocks.map((block) => block.text).join('\n');
+    }
+    const text = blockText ?? (this.kind === 'basanti' && this.config.responsePaths === undefined
+      ? renderBasantiReply(at(data, 'result.data.json.reply'))
+      : responsePaths
       .map((path) => at(data, path))
-      .find((value) => typeof value === 'string');
+      .find((value) => typeof value === 'string'));
     assert(
       text !== undefined,
       'Target JSON did not contain a configured text response',
@@ -344,6 +370,19 @@ export class HttpConversationAdapter {
     return {
       text,
       status,
+      ...(this.config.responseTextBlocksPath !== undefined ? {
+        surface: 'native-text-blocks', trace: data,
+      } : {}),
+      ...(this.kind === 'basanti' ? {
+        surface: this.config.responseTextBlocksPath !== undefined ? 'native-text-blocks' : this.config.responsePaths === undefined ? 'basanti-shared-channel' : 'custom-response-paths',
+        requestContext: { date: context.actor.date, timezone: context.actor.timezone, householdId: context.actor.householdId },
+        productContext: {
+          date: at(data, 'result.data.json.reply.date'),
+          timezone: at(data, 'result.data.json.reply.timezone'),
+        },
+        clockVerification: checkBasantiClock(at(data, 'result.data.json.reply'), context.actor),
+        trace: data,
+      } : {}),
       ...(this.config.tracePath
         ? { trace: at(data, this.config.tracePath) }
         : {}),
