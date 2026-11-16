@@ -13,7 +13,9 @@ export async function qualifyContainerLease(image, { docker = nativeDocker } = {
   const program = `import {RunStore} from '/app/src/store.mjs';
     new RunStore('/data/runs').acquireLease();
     console.log('lease-ready');setInterval(()=>{},1000);`;
-  const args = ['--init', '--network', 'none', '--read-only', '--mount',
+  // Make the isolated Node owner PID 1. With an init helper, concurrent Docker
+  // exec probes can race child startup and consume a different PID on restart.
+  const args = ['--network', 'none', '--read-only', '--mount',
     `type=volume,source=${volume},target=/data/runs`, '--entrypoint', 'node'];
   const read = (container) => JSON.parse(docker('exec', container, 'node', '-e',
     `console.log(require('fs').readFileSync('/data/runs/.roleplay-lock','utf8'))`));
@@ -33,6 +35,7 @@ export async function qualifyContainerLease(image, { docker = nativeDocker } = {
     containers.push(first);
     const original = await wait(first);
     assert(original.mechanism === 'kernel-flock', 'Container must use kernel ownership');
+    assert(original.pid === 1, 'Isolated Node must own PID 1 so restart guarantees PID reuse');
     docker('exec', first, 'node', '-e',
       `require('fs').writeFileSync('/data/runs/archived.json','{"status":"completed","evidence":"unchanged"}\\n')`);
     const evidence = (container) => docker('exec', container, 'node', '-e',

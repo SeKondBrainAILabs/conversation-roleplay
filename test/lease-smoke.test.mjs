@@ -15,7 +15,7 @@ for (const failure of ['unexpected admission', 'client timeout']) {
         return '';
       }
       if (args[0] === 'exec' && args.at(-1).includes('.roleplay-lock'))
-        return JSON.stringify({ owner: 'original', mechanism: 'kernel-flock' });
+        return JSON.stringify({ owner: 'original', mechanism: 'kernel-flock', pid: 1 });
       if (args[0] === 'exec' && args.at(-1).includes('createHash')) return 'unchanged-evidence';
       return '';
     };
