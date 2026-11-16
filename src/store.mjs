@@ -6,12 +6,10 @@ import {
   appendFileSync,
   readdirSync,
   renameSync,
-  openSync,
-  closeSync,
-  unlinkSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { assert, redact, now, uuid } from './util.mjs';
+import { assert, redact, now } from './util.mjs';
+import { acquireRunLease } from './run-lease.mjs';
 
 export class RunStore {
   constructor(directory, { secrets = [] } = {}) {
@@ -20,45 +18,7 @@ export class RunStore {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
   }
   acquireLease() {
-    const path = join(this.directory, '.roleplay-lock');
-    const owner = uuid();
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const fd = openSync(path, 'wx', 0o600);
-        try {
-          writeFileSync(fd, JSON.stringify({ owner, pid: process.pid }));
-        } finally {
-          closeSync(fd);
-        }
-        return () => {
-          try {
-            if (JSON.parse(readFileSync(path, 'utf8')).owner === owner)
-              unlinkSync(path);
-          } catch {
-            /* Only release this process's lease. */
-          }
-        };
-      } catch (error) {
-        if (error.code !== 'EEXIST') throw error;
-        const existing = JSON.parse(readFileSync(path, 'utf8'));
-        assert(
-          Number.isInteger(existing.pid) && existing.pid > 0,
-          'Cannot verify the run directory owner',
-        );
-        try {
-          process.kill(existing.pid, 0);
-        } catch (probe) {
-          if (probe.code === 'ESRCH') {
-            unlinkSync(path);
-            continue;
-          }
-        }
-        throw new Error(
-          'This run directory is already open in another process; use its dashboard or a different directory',
-        );
-      }
-    }
-    throw new Error('Could not acquire the run directory lease');
+    return acquireRunLease(this.directory);
   }
   path(id, suffix) {
     assert(/^[\w-]{1,100}$/.test(id), 'Invalid run ID');
