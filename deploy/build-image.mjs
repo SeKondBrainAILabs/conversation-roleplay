@@ -6,6 +6,7 @@ import { resolve, join } from 'node:path';
 import { get } from 'node:http';
 import { assert, sleep } from '../src/util.mjs';
 import { archiveIdentity } from './image-identity.mjs';
+import { qualifyContainerLease } from './lease-smoke.mjs';
 
 const revision = process.env.GITHUB_SHA;
 const runId = process.env.GITHUB_RUN_ID;
@@ -98,6 +99,7 @@ try {
 } finally {
   docker('rm', '--force', '--volumes', container);
 }
+const leaseSmoke = await qualifyContainerLease(image);
 const output = resolve('image-artifact');
 mkdirSync(output, { recursive: true });
 const archive = join(output, 'image.tar');
@@ -123,5 +125,5 @@ writeFileSync(
   ),
 );
 console.log(
-  JSON.stringify({ revision, platform, imageId, containerSmoke: 'passed' }),
+  JSON.stringify({ revision, platform, imageId, containerSmoke: 'passed', leaseSmoke }),
 );
