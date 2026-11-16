@@ -491,7 +491,7 @@ export class CampaignRun extends EventEmitter {
             response,
             verification: step.verification,
             sharedFacts: input.shared,
-            phase: 'in_progress',
+            evaluationStage: 'after_target_reply',
             instructions: step.instructions,
           });
           // Preserve the evaluator's actual output even if its contract is invalid.
